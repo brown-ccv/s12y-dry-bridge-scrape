@@ -27,7 +27,7 @@ playwright install
 And finally run the script
 
 ```
-python scrape.py
+python scrape.py -r 3day
 ```
 
-The results will be saved in `chart.csv`
+The results will be saved in `chart-3day.csv`
