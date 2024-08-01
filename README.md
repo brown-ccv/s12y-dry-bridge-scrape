@@ -24,10 +24,17 @@ Then install the `playwright` utilities
 playwright install
 ```
 
-And finally run the script
+Run the script to get CSV with a given time range
 
 ```
 python scrape.py -r 3day
 ```
 
 The results will be saved in `chart-3day.csv`
+
+Or run the script with a given date range. The output files will look like
+`chart-YYYY-MM-DD.csv`. If an end date is not provided, the script assumes today
+
+```
+python scrape.py -s 2023-08-31 -e 2024-08-01
+```
