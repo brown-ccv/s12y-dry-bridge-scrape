@@ -2,7 +2,7 @@
 import argparse
 import datetime
 import json
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, TimeoutError
 
 DATE_FORMAT = '%Y-%m-%d'
 
@@ -53,13 +53,18 @@ def scrape_range(browser, start, end):
             current_date_text = page.locator('#date-range-dialog-selector').text_content()
             current_date = datetime.datetime.strptime(current_date_text.split('-')[0].strip(), '%b %d, %Y')
 
-        button = page.locator('.highcharts-contextbutton')
-        button.click()
-        menu = page.get_by_text('Download CSV')
-        with page.expect_download() as download_info:
-            menu.click()
-        download = download_info.value
-        download.save_as(f'./chart-{day.strftime('%Y-%m-%d')}.csv')
+        try:
+            button = page.locator('.highcharts-contextbutton')
+            button.click(timeout=1000)
+
+            menu = page.get_by_text('Download CSV')
+            with page.expect_download() as download_info:
+                menu.click(timeout=1000)
+            download = download_info.value
+            download.save_as(f'./chart-{day.strftime('%Y-%m-%d')}.csv')
+        except TimeoutError:
+            continue
+
     browser.close()
     
 def daterange(start_date, end_date):
