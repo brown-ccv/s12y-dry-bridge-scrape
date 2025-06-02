@@ -52,14 +52,8 @@ CREATE DATABASE dry_bridge_db OWNER dev_user;
 GRANT ALL PRIVILEGES ON DATABASE dry_bridge_db TO dev_user;
 ```
 
-2. Create a `.env` file in the project root with the following variables:
-```
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=dry_bridge_db
-DB_USER=dev_user
-DB_PASSWORD=Password123!@#
-```
+2. Take `example.env` and create a copy called `.env` 
+Update the variables with your database credentials.
 
 ### Running the PostgreSQL Scraper
 
