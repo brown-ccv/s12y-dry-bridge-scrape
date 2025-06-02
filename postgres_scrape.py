@@ -12,7 +12,6 @@ from io import StringIO
 
 load_dotenv()
 
-# Local development test database
 DB_CONFIG = {
     'host': os.getenv('DB_HOST'),
     'port': os.getenv('DB_PORT'),
@@ -173,7 +172,7 @@ def scrape_range(browser, start, end, connection):
     range_selector.click()
     page.wait_for_timeout(3000)
 
-    # Track status of insertion
+    # For tracking status of download/insertion
     day_status = {
         'success': [],
         'failed_download': [],
@@ -196,8 +195,9 @@ def scrape_range(browser, start, end, connection):
             current_date_text = page.locator('#date-range-dialog-selector').text_content()
             current_date = datetime.datetime.strptime(current_date_text.split('-')[0].strip(), '%b %d, %Y')
 
-        # Download CSV with retries
+        
         download_success = False
+        # Sometimes download fails, so allow 3 retries
         for attempt in range(MAX_RETRIES):
             try:
                 button = page.locator('.highcharts-contextbutton')
@@ -215,7 +215,8 @@ def scrape_range(browser, start, end, connection):
                     csv_content = f.read()
                 
                 download_success = True
-                break  # Successfully downloaded, exit
+                # Successfully downloaded, exit
+                break
                 
             except TimeoutError:
                 print(f"Attempt {attempt + 1}/{MAX_RETRIES} failed to download CSV for {day.strftime(DATE_FORMAT)}")
