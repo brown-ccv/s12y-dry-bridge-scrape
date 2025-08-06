@@ -1,0 +1,10 @@
+services:
+  db:
+    image: postgres
+    restart: always
+    environment:
+      POSTGRES_DB: dry_bridge_db
+      POSTGRES_USER: sustainability_application
+      POSTGRES_PASSWORD: password
+    ports:
+      - 5432:5432
