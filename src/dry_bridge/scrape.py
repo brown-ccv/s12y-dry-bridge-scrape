@@ -1,103 +1,140 @@
-#!/usr/bin/env python3
-import argparse
-import datetime
-from playwright.sync_api import sync_playwright, TimeoutError
+import json
+import os
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any
 
-DATE_FORMAT = "%Y-%m-%d"
-
-
-def run(playwright, time_range, **kwargs):
-    browser = playwright.chromium.launch(headless=False)
-
-    if kwargs["start"]:
-        scrape_range(browser, kwargs["start"], kwargs["end"])
-    else:
-        scrape_page(browser, time_range)
+import httpx
+from httpx_retries import RetryTransport, Retry
 
 
-def scrape_page(browser, time_range):
-    page = browser.new_page()
-    page.goto(
-        "https://hmi.alsoenergy.com/powerhmi/publicdisplay/be7a7484-25f9-4b3e-a3ac-637ca6111cf3/main?arg=NTk0NDk%3d&lang=en-US"
-    )
-    page.wait_for_timeout(1000)
-    range_selector = page.locator(f"#date-range-button-{time_range}")
-    range_selector.click()
-    button = page.locator(".highcharts-contextbutton")
-    button.click()
-    menu = page.get_by_text("Download CSV")
-    with page.expect_download() as download_info:
-        menu.click()
-    download = download_info.value
-    download.save_as(f"./chart-{time_range}.csv")
-    browser.close()
+MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
 
 
-def scrape_range(browser, start, end):
-    end = datetime.datetime.now() if end is None else end
-    page = browser.new_page()
-    page.goto(
-        "https://hmi.alsoenergy.com/powerhmi/publicdisplay/be7a7484-25f9-4b3e-a3ac-637ca6111cf3/main?arg=NTk0NDk%3d&lang=en-US"
-    )
-    page.wait_for_timeout(3000)
-    range_selector = page.locator("#date-range-button-day")
-    range_selector.click()
-    page.wait_for_timeout(3000)
+@dataclass
+class Metadata:
+    """
+    metadata of the downloads for the raw data
+    """
 
-    for day in daterange(start, end):
-        current_date_text = page.locator("#date-range-dialog-selector").text_content()
-        current_date = datetime.datetime.strptime(
-            current_date_text.split("-")[0].strip(), "%b %d, %Y"
-        )
-        while current_date.strftime(DATE_FORMAT) != day.strftime(DATE_FORMAT):
-            if current_date < day:
-                page.locator("#date-time-picker-button-right-arrow").click()
-            else:
-                page.locator("#date-time-picker-button-left-arrow").click()
-            page.wait_for_timeout(100)
-            current_date_text = page.locator(
-                "#date-range-dialog-selector"
-            ).text_content()
-            current_date = datetime.datetime.strptime(
-                current_date_text.split("-")[0].strip(), "%b %d, %Y"
+    path: Path
+    last_start: datetime | None
+    success: list[str]
+    failed: list[str]
+
+    def save(self):
+        """save data to disk"""
+        with open(self.path, "w") as f:
+            date_str = self.last_start.strftime("%Y-%m-%d") if self.last_start else None
+            f.write(
+                json.dumps(
+                    {
+                        "last_start": date_str,
+                        "success": self.success,
+                        "failed": self.failed,
+                    }
+                )
             )
 
+    @staticmethod
+    def load(path: Path):
+        """load metadata from disk"""
         try:
-            button = page.locator(".highcharts-contextbutton")
-            button.click(timeout=1000)
-
-            menu = page.get_by_text("Download CSV")
-            with page.expect_download() as download_info:
-                menu.click(timeout=1000)
-            download = download_info.value
-            download.save_as(f"./chart-{day.strftime('%Y-%m-%d')}.csv")
-        except TimeoutError:
-            continue
-
-    browser.close()
+            with open(path, "r") as f:
+                j = json.loads(f.read())
+                return Metadata(
+                    last_start=j["last_start"],
+                    success=j["success"],
+                    failed=j["failed"],
+                    path=path,
+                )
+        except FileNotFoundError:
+            return Metadata(last_start=None, success=[], failed=[], path=path)
 
 
-def daterange(start_date, end_date):
-    days = int((end_date - start_date).days) + 1
-    for n in range(days):
-        yield end_date - datetime.timedelta(n)
+def scrape(
+    start: datetime,
+    end: datetime,
+    resume: bool,
+    output: Path,
+):
+    """
+    loads up the different arguments and kicks off the scrape
+    """
+    if not output.exists():
+        output.mkdir()
+
+    metadata = Metadata.load(Path(output) / "metadata.json")
+    last_start = metadata.last_start
+
+    if start and resume and last_start:
+        metadata = scrape_range(last_start, end, output, metadata)
+    else:
+        metadata = scrape_range(start, end, output, metadata)
+
+    metadata.save()
 
 
-def parse_date(s):
-    return datetime.datetime.strptime(s, "%Y-%m-%d")
+def scrape_range(
+    start: datetime, end: datetime, output: Path, metadata: Metadata
+) -> Metadata:
+    """
+    this function is responsible for downloading all the CSV files and updating metadata
+    """
+    home_url = "https://hmi.alsoenergy.com/powerhmi/publicdisplay/be7a7484-25f9-4b3e-a3ac-637ca6111cf3/main?arg=NTk0NDk%3d&lang=en-US"
+    api_url = "https://hmi.alsoenergy.com/api/view/sourcedata/C44014"
+    retry = Retry(total=MAX_RETRIES, backoff_factor=0.5)
+    client = httpx.Client(transport=RetryTransport(retry=retry))
+
+    # NOTE(@broarr): This is to get the auth cookies only
+    result = client.get(home_url, follow_redirects=True)
+
+    current_date = start
+    while current_date < end:
+        metadata.last_start = current_date
+        date_str = current_date.strftime("%Y-%m-%d")
+        req_params = {
+            "type": 0,
+            "parameters": [
+                {"name": "Context", "type": 3, "value": "site"},
+                {"name": "Source", "type": 1, "value": "59449"},
+                {"name": "Start", "type": 7, "value": date_str},
+                {"name": "End", "type": 7, "value": date_str},
+            ],
+            "props": None,
+            "series": [],
+            "id": 15,
+            "pollInterval": 5,
+        }
+        headers = {"Referer": home_url}
+        try:
+            result = client.post(
+                api_url, headers=headers, json=req_params, timeout=10.0
+            )
+            data = result.json()
+
+            if len(data["data"]) > 0:
+                metadata.success.append(date_str)
+                with open(output / f"{date_str}.json", "w") as f:
+                    f.write(json.dumps(data, indent=2, sort_keys=True))
+            else:
+                raise Exception(f"no data in response body for date {date_str}")
+        except (httpx.HTTPError, Exception):
+            metadata.failed.append(date_str)
+        current_date += timedelta(days=1)
+
+    return metadata
 
 
-parser = argparse.ArgumentParser(description="scrape dry bridge solar data")
-parser.add_argument(
-    "-r",
-    dest="range",
-    choices=["day", "3day", "month", "year", "lifetime"],
-    help="range for csv",
-    default="3day",
-)
-parser.add_argument("-s", dest="start", type=parse_date, help="start date")
-parser.add_argument("-e", dest="end", type=parse_date, help="end date")
-args = parser.parse_args()
+def read_scrape(output: Path) -> list[dict[str, Any]]:
+    data = []
+    files = [f for f in output.glob("*.json") if "metadata" not in f.name]
+    files = sorted(files, key=lambda f: datetime.fromisoformat(f.stem))
+    for f in files:
+        data.append(read_scrape_file(f))
+    return data
 
-with sync_playwright() as playwright:
-    run(playwright, args.range, start=args.start, end=args.end)
+
+def read_scrape_file(fname: Path) -> dict[str, Any]:
+    return json.loads(fname.read_text())
