@@ -39,7 +39,7 @@ def extract(
     end: Annotated[str, typer.Argument(help="end time for web scrape")] = "now",
     resume: Annotated[bool, typer.Option(help="resume previous scrape")] = False,
     output: Annotated[str, typer.Argument(help="output directory")] = "./output",
-):
+) -> None:
     """
     Extract solar production data from the web dashboard.
 
@@ -70,7 +70,7 @@ def load(
     ] = "./output",
     raw: Annotated[bool, typer.Option(help="load raw data")] = True,
     transform: Annotated[bool, typer.Option(help="load transformed data")] = True,
-):
+) -> None:
     """
     Load extracted data into PostgreSQL database.
 
@@ -117,7 +117,7 @@ def load(
 
 
 @app.command()
-def realtime():
+def realtime() -> None:
     """
     Real-time data processing command (placeholder).
 
@@ -127,7 +127,7 @@ def realtime():
     pass
 
 
-def main():
+def main() -> None:
     """
     Entry point for the CLI application.
 
