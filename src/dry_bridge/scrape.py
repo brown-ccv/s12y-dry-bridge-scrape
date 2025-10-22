@@ -36,7 +36,7 @@ class Metadata:
     ]  # List of successfully downloaded date strings (YYYY-MM-DD format)
     failed: list[str]  # List of failed download date strings (YYYY-MM-DD format)
 
-    def save(self):
+    def save(self) -> None:
         """
         Save metadata to disk as JSON.
 
@@ -56,7 +56,7 @@ class Metadata:
             )
 
     @staticmethod
-    def load(path: Path):
+    def load(path: Path) -> "Metadata":
         """
         Load metadata from disk or create new instance if file doesn't exist.
 
@@ -84,7 +84,7 @@ def scrape(
     end: datetime,
     resume: bool,
     output: Path,
-):
+) -> None:
     """
     Main scraping orchestration function.
 

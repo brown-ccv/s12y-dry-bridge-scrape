@@ -60,7 +60,7 @@ def database_connection(db_config: DatabaseConfig) -> connection:
         raise Exception(f"error connecting to database: {e}")
 
 
-def create_tables(conn: connection):
+def create_tables(conn: connection) -> None:
     """
     Create the required database tables if they don't exist.
 
@@ -171,7 +171,7 @@ def load_raw(
         raise error
 
 
-def load_transformed(conn: connection, data: list[ProcessedRow]):
+def load_transformed(conn: connection, data: list[ProcessedRow]) -> None:
     """
     Load a list of processed data rows into the database.
 
