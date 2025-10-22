@@ -2,3 +2,6 @@
 /*.csv
 .env
 __pycache__/
+output/
+*.egg-info/
+log*

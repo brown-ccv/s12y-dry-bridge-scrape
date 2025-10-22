@@ -1,0 +1,140 @@
+import json
+import os
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any
+
+import httpx
+from httpx_retries import RetryTransport, Retry
+
+
+MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
+
+
+@dataclass
+class Metadata:
+    """
+    metadata of the downloads for the raw data
+    """
+
+    path: Path
+    last_start: datetime | None
+    success: list[str]
+    failed: list[str]
+
+    def save(self):
+        """save data to disk"""
+        with open(self.path, "w") as f:
+            date_str = self.last_start.strftime("%Y-%m-%d") if self.last_start else None
+            f.write(
+                json.dumps(
+                    {
+                        "last_start": date_str,
+                        "success": self.success,
+                        "failed": self.failed,
+                    }
+                )
+            )
+
+    @staticmethod
+    def load(path: Path):
+        """load metadata from disk"""
+        try:
+            with open(path, "r") as f:
+                j = json.loads(f.read())
+                return Metadata(
+                    last_start=j["last_start"],
+                    success=j["success"],
+                    failed=j["failed"],
+                    path=path,
+                )
+        except FileNotFoundError:
+            return Metadata(last_start=None, success=[], failed=[], path=path)
+
+
+def scrape(
+    start: datetime,
+    end: datetime,
+    resume: bool,
+    output: Path,
+):
+    """
+    loads up the different arguments and kicks off the scrape
+    """
+    if not output.exists():
+        output.mkdir()
+
+    metadata = Metadata.load(Path(output) / "metadata.json")
+    last_start = metadata.last_start
+
+    if start and resume and last_start:
+        metadata = scrape_range(last_start, end, output, metadata)
+    else:
+        metadata = scrape_range(start, end, output, metadata)
+
+    metadata.save()
+
+
+def scrape_range(
+    start: datetime, end: datetime, output: Path, metadata: Metadata
+) -> Metadata:
+    """
+    this function is responsible for downloading all the CSV files and updating metadata
+    """
+    home_url = "https://hmi.alsoenergy.com/powerhmi/publicdisplay/be7a7484-25f9-4b3e-a3ac-637ca6111cf3/main?arg=NTk0NDk%3d&lang=en-US"
+    api_url = "https://hmi.alsoenergy.com/api/view/sourcedata/C44014"
+    retry = Retry(total=MAX_RETRIES, backoff_factor=0.5)
+    client = httpx.Client(transport=RetryTransport(retry=retry))
+
+    # NOTE(@broarr): This is to get the auth cookies only
+    result = client.get(home_url, follow_redirects=True)
+
+    current_date = start
+    while current_date < end:
+        metadata.last_start = current_date
+        date_str = current_date.strftime("%Y-%m-%d")
+        req_params = {
+            "type": 0,
+            "parameters": [
+                {"name": "Context", "type": 3, "value": "site"},
+                {"name": "Source", "type": 1, "value": "59449"},
+                {"name": "Start", "type": 7, "value": date_str},
+                {"name": "End", "type": 7, "value": date_str},
+            ],
+            "props": None,
+            "series": [],
+            "id": 15,
+            "pollInterval": 5,
+        }
+        headers = {"Referer": home_url}
+        try:
+            result = client.post(
+                api_url, headers=headers, json=req_params, timeout=10.0
+            )
+            data = result.json()
+
+            if len(data["data"]) > 0:
+                metadata.success.append(date_str)
+                with open(output / f"{date_str}.json", "w") as f:
+                    f.write(json.dumps(data, indent=2, sort_keys=True))
+            else:
+                raise Exception(f"no data in response body for date {date_str}")
+        except (httpx.HTTPError, Exception):
+            metadata.failed.append(date_str)
+        current_date += timedelta(days=1)
+
+    return metadata
+
+
+def read_scrape(output: Path) -> list[dict[str, Any]]:
+    data = []
+    files = [f for f in output.glob("*.json") if "metadata" not in f.name]
+    files = sorted(files, key=lambda f: datetime.fromisoformat(f.stem))
+    for f in files:
+        data.append(read_scrape_file(f))
+    return data
+
+
+def read_scrape_file(fname: Path) -> dict[str, Any]:
+    return json.loads(fname.read_text())
