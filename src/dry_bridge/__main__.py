@@ -6,8 +6,7 @@ from the Dry Bridge solar farm dashboard and loading it into a PostgreSQL databa
 """
 
 import logging
-import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from itertools import chain
 from pathlib import Path
 
@@ -15,16 +14,21 @@ import typer
 from dotenv import load_dotenv
 from typing_extensions import Annotated
 
-from .scrape import scrape, read_scrape
-from .load import DatabaseConfig, database_connection, load_raw, load_transformed
+from .load import (
+    database_connection,
+    load_raw,
+    load_transformed,
+    most_recent_record,
+)
+from .scrape import scrape, read_scrape, scrape_date
 from .transform import flatten_raw_data, transform_raw_data
+from .utils import START_OF_OPERATION, days_from_timestamp, round_down_15min, local_now
 
 
 app = typer.Typer()
 
 load_dotenv()
 
-START_OF_OPERATION = datetime(2023, 7, 1)
 
 logging.basicConfig(
     format="%(levelname)s [%(asctime)s] %(name)s - %(message)s",
@@ -85,18 +89,7 @@ def load(
     Raises:
         Exception: If database configuration is invalid or missing from environment
     """
-    try:
-        db_config = DatabaseConfig(
-            host=os.environ["DB_HOST"],
-            port=int(os.environ["DB_PORT"]),
-            database=os.environ["DB_NAME"],
-            user=os.environ["DB_USER"],
-            password=os.environ["DB_PASSWORD"],
-        )
-    except KeyError:
-        raise Exception("invalid database configuration, double check your environment")
-
-    conn = database_connection(db_config)
+    conn = database_connection()
     data = read_scrape(Path(output))
     raw_data = list(chain.from_iterable([flatten_raw_data(d) for d in data]))
 
@@ -117,14 +110,36 @@ def load(
 
 
 @app.command()
-def realtime() -> None:
-    """
-    Real-time data processing command (placeholder).
+def refresh() -> None:
+    conn = database_connection()
 
-    This command is reserved for future real-time data processing functionality.
-    Currently not implemented.
-    """
-    pass
+    row = most_recent_record(conn)
+    timestamp = row.timestamp if row else START_OF_OPERATION
+    missing_dates = days_from_timestamp(timestamp)
+    results = [scrape_date(d) for d in missing_dates]
+    raw_data = list(chain.from_iterable([flatten_raw_data(d) for d in results]))
+
+    delta = timedelta(minutes=15)
+    current_timestamp = timestamp + delta
+    last_available_timestamp = round_down_15min(local_now())
+    raw_rows = []
+    while current_timestamp <= last_available_timestamp:
+        found = False
+        for raw_row in raw_data:
+            if raw_row.timestamp == current_timestamp:
+                found = True
+                raw_rows.append(raw_row)
+        if not found:
+            print("did not find record for '{current_timestamp}'")
+
+    load_raw(conn, raw_rows)
+    conn.commit()
+
+    transformed_data = sorted(
+        list(set(transform_raw_data(raw_rows))), key=lambda x: x.timestamp
+    )
+    load_transformed(conn, transformed_data)
+    conn.commit()
 
 
 def main() -> None:

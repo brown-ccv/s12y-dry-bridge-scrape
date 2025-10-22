@@ -5,3 +5,15 @@ __pycache__/
 output/
 *.egg-info/
 log*
+
+# Python build artifacts
+dist/
+*.pyc
+build/
+
+# Development tools  
+.DS_Store
+*.tmp
+*.swp
+.vscode/
+.idea/

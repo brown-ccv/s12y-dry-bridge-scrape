@@ -7,6 +7,7 @@ table creation, and data insertion for both raw and processed solar data.
 It uses PostgreSQL as the backend database with psycopg2 for connectivity.
 """
 
+import os
 from dataclasses import dataclass, asdict
 
 from psycopg2 import connect, Error
@@ -30,7 +31,7 @@ class DatabaseConfig:
     password: str  # Database password for authentication
 
 
-def database_connection(db_config: DatabaseConfig) -> connection:
+def database_connection() -> connection:
     """
     Establish a database connection and ensure tables exist.
 
@@ -46,6 +47,17 @@ def database_connection(db_config: DatabaseConfig) -> connection:
     Raises:
         Exception: If connection fails or table creation fails
     """
+    try:
+        db_config = DatabaseConfig(
+            host=os.environ["DB_HOST"],
+            port=int(os.environ["DB_PORT"]),
+            database=os.environ["DB_NAME"],
+            user=os.environ["DB_USER"],
+            password=os.environ["DB_PASSWORD"],
+        )
+    except KeyError:
+        raise Exception("invalid database configuration, double check your environment")
+
     try:
         connection = connect(
             host=db_config.host,
@@ -191,3 +203,31 @@ def load_transformed(conn: connection, data: list[ProcessedRow]) -> None:
     except Error as error:
         conn.rollback()
         raise error
+
+
+def most_recent_record(conn: connection) -> ProcessedRow | None:
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(
+            """
+            SELECT * FROM dry_bridge_solar_processed
+            ORDER BY timestamp DESC
+            LIMIT 1;
+            """
+        )
+        record = cursor.fetchone()
+
+        if record is None:
+            return None
+
+        return ProcessedRow(
+            timestamp=record[0],
+            kw=record[1],
+            kwh=record[2],
+            mmbtu=record[3],
+            mtco2e=record[4],
+        )
+    except Error:
+        conn.rollback()
+        raise Error

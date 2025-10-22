@@ -112,6 +112,33 @@ def scrape(
     metadata.save()
 
 
+def scrape_date(date: datetime) -> dict[str, Any]:
+    home_url = "https://hmi.alsoenergy.com/powerhmi/publicdisplay/be7a7484-25f9-4b3e-a3ac-637ca6111cf3/main?arg=NTk0NDk%3d&lang=en-US"
+    api_url = "https://hmi.alsoenergy.com/api/view/sourcedata/C44014"
+    retry = Retry(total=MAX_RETRIES, backoff_factor=0.5)
+    client = httpx.Client(transport=RetryTransport(retry=retry))
+
+    # NOTE(@broarr): This is to get the auth cookies only
+    result = client.get(home_url, follow_redirects=True)
+    date_str = date.strftime("%Y-%m-%d")
+    req_params = {
+        "type": 0,
+        "parameters": [
+            {"name": "Context", "type": 3, "value": "site"},
+            {"name": "Source", "type": 1, "value": "59449"},
+            {"name": "Start", "type": 7, "value": date_str},
+            {"name": "End", "type": 7, "value": date_str},
+        ],
+        "props": None,
+        "series": [],
+        "id": 15,
+        "pollInterval": 5,
+    }
+    headers = {"Referer": home_url}
+    result = client.post(api_url, headers=headers, json=req_params, timeout=10.0)
+    return result.json()
+
+
 def scrape_range(
     start: datetime, end: datetime, output: Path, metadata: Metadata
 ) -> Metadata:
@@ -131,38 +158,13 @@ def scrape_range(
     Returns:
         Metadata: Updated metadata with success/failure tracking
     """
-    home_url = "https://hmi.alsoenergy.com/powerhmi/publicdisplay/be7a7484-25f9-4b3e-a3ac-637ca6111cf3/main?arg=NTk0NDk%3d&lang=en-US"
-    api_url = "https://hmi.alsoenergy.com/api/view/sourcedata/C44014"
-    retry = Retry(total=MAX_RETRIES, backoff_factor=0.5)
-    client = httpx.Client(transport=RetryTransport(retry=retry))
-
-    # NOTE(@broarr): This is to get the auth cookies only
-    result = client.get(home_url, follow_redirects=True)
-
     current_date = start
     while current_date < end:
         metadata.last_start = current_date
-        date_str = current_date.strftime("%Y-%m-%d")
-        req_params = {
-            "type": 0,
-            "parameters": [
-                {"name": "Context", "type": 3, "value": "site"},
-                {"name": "Source", "type": 1, "value": "59449"},
-                {"name": "Start", "type": 7, "value": date_str},
-                {"name": "End", "type": 7, "value": date_str},
-            ],
-            "props": None,
-            "series": [],
-            "id": 15,
-            "pollInterval": 5,
-        }
-        headers = {"Referer": home_url}
+        current_date += timedelta(days=1)
+        date_str = current_date.strftime("%Y-%M-%d")
         try:
-            result = client.post(
-                api_url, headers=headers, json=req_params, timeout=10.0
-            )
-            data = result.json()
-
+            data = scrape_date(current_date)
             if len(data["data"]) > 0:
                 metadata.success.append(date_str)
                 with open(output / f"{date_str}.json", "w") as f:
@@ -171,7 +173,6 @@ def scrape_range(
                 raise Exception(f"no data in response body for date {date_str}")
         except (httpx.HTTPError, Exception):
             metadata.failed.append(date_str)
-        current_date += timedelta(days=1)
 
     return metadata
 
