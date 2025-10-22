@@ -1,3 +1,10 @@
+"""
+Main CLI application for the Dry Bridge Solar Data ETL pipeline.
+
+This module provides command-line interface for extracting solar production data
+from the Dry Bridge solar farm dashboard and loading it into a PostgreSQL database.
+"""
+
 import logging
 import os
 from datetime import datetime
@@ -33,6 +40,18 @@ def extract(
     resume: Annotated[bool, typer.Option(help="resume previous scrape")] = False,
     output: Annotated[str, typer.Argument(help="output directory")] = "./output",
 ):
+    """
+    Extract solar production data from the web dashboard.
+
+    Downloads raw JSON data from the Dry Bridge solar farm dashboard for the specified
+    date range. Data is saved as individual JSON files per day in the output directory.
+
+    Args:
+        start: Start date in ISO format (YYYY-MM-DD) or "all" for full history
+        end: End date in ISO format (YYYY-MM-DD) or "now" for current date
+        resume: Whether to resume from the last successful download
+        output: Directory to save the extracted JSON files
+    """
     start_date = START_OF_OPERATION
     if start != "all":
         start_date = datetime.fromisoformat(start)
@@ -52,6 +71,20 @@ def load(
     raw: Annotated[bool, typer.Option(help="load raw data")] = True,
     transform: Annotated[bool, typer.Option(help="load transformed data")] = True,
 ):
+    """
+    Load extracted data into PostgreSQL database.
+
+    Reads JSON files from the output directory and loads them into the database.
+    Can load both raw data and transformed/processed data based on the flags.
+
+    Args:
+        output: Directory containing the extracted JSON files
+        raw: Whether to load raw data into dry_bridge_solar_raw table
+        transform: Whether to load transformed data into dry_bridge_solar_processed table
+
+    Raises:
+        Exception: If database configuration is invalid or missing from environment
+    """
     try:
         db_config = DatabaseConfig(
             host=os.environ["DB_HOST"],
@@ -85,8 +118,20 @@ def load(
 
 @app.command()
 def realtime():
+    """
+    Real-time data processing command (placeholder).
+
+    This command is reserved for future real-time data processing functionality.
+    Currently not implemented.
+    """
     pass
 
 
 def main():
+    """
+    Entry point for the CLI application.
+
+    This function is called when the package is executed as a script.
+    It initializes the Typer application and handles command-line arguments.
+    """
     app()

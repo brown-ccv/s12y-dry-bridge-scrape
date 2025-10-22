@@ -1,97 +1,208 @@
-# Dry Bridge Scrape
+# Dry Bridge Solar Data ETL
 
-Quick script to pull the CSV data from [Brown's new solar investment](https://hmi.alsoenergy.com/powerhmi/publicdisplay/be7a7484-25f9-4b3e-a3ac-637ca6111cf3/main?arg=NTk0NDk%3d&lang=en-US). This script uses `playwright` to handle the scraping part. There was some tricky auth stuff I didn't want to deal with
+An ETL (Extract, Transform, Load) pipeline for collecting and processing solar production data from [Dry Bridge Solar Farm](https://hmi.alsoenergy.com/powerhmi/publicdisplay/be7a7484-25f9-4b3e-a3ac-637ca6111cf3/main?arg=NTk0NDk%3d&lang=en-US). This pipeline extracts data via web scraping, transforms it into standardized energy metrics, and loads it into a PostgreSQL database for analysis
 
-## Getting Started
+## Installation
 
+This project uses modern Python tooling for dependency management and development. Choose one of the installation methods below:
 
-(Optional) Create a virtual environment
+[uv](https://github.com/astral-sh/uv) is a fast Python package installer and resolver.
 
-```
-python3 -m venv .venv
-source ./.venv/bin/activate
-```
+```bash
+# Install uv if you haven't already
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-First install the requirements
+# Install the project and its dependencies
+uv sync
 
-```
-pip install -r requirements.txt
-```
-
-Then install the `playwright` utilities
-
-```
-playwright install
+# Activate the virtual environment
+source .venv/bin/activate
 ```
 
-Run the script to get CSV with a given time range
+## Configuration
 
-```
-python scrape.py -r 3day
-```
+### Environment Setup
 
-The results will be saved in `chart-3day.csv`
-
-Or run the script with a given date range. The output files will look like
-`chart-YYYY-MM-DD.csv`. If an end date is not provided, the script assumes today
-
-```
-python scrape.py -s 2023-08-31 -e 2024-08-01
+Copy the example environment file:
+```bash
+cp env.example .env
 ```
 
-## PostgreSQL Integration
+The `env.example` file contains credentials to connect to the docker development database. When you're ready to upload data to production, edit `.env` with the production database credentials
 
-The `postgres_scrape.py` script extends the basic scraping functionality by storing the data in a PostgreSQL database. This allows for persistent storage and easier data analysis.
+```env
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=dry_bridge_db
+DB_USER=your_username
+DB_PASSWORD=your_password
+```
 
 ### Database Setup
 
-1. Create a PostgreSQL database and user:
+The database is setup and managed by the DBA team. The Office of Sustainability and Resiliency is the data owner
+
+## Usage
+
+The application provides a CLI interface with two main commands: `extract` and `load`.
+
+### Extracting Data
+
+Extract solar data from the web dashboard:
+
+```bash
+# Extract all available data (from July 1, 2023 to now) into ./output
+dry-bridge extract
+
+# Extract data for a specific date range
+dry-bridge extract -s 2023-08-01 -e 2024-08-01
+
+# Resume a previous extraction
+dry-bridge extract --resume
+
+# Extract to a custom output directory
+dry-bridge extract --output ./custom_output
+```
+
+### Loading Data
+
+Load extracted data into the database:
+
+```bash
+# Load both raw and processed data
+dry-bridge load
+
+# Load only raw data
+dry-bridge load --no-transform
+
+# Load only processed data  
+dry-bridge load --no-raw
+
+# Load from custom output directory
+dry-bridge load ./custom_output
+```
+
+### Complete ETL Pipeline
+
+For a complete ETL run:
+
+```bash
+# Extract all data and load into database
+dry-bridge extract && dry-bridge load
+```
+
+## Database Schema
+
+The application creates two tables:
+
+### `dry_bridge_solar_processed`
+- `timestamp` (TIMESTAMP, PRIMARY KEY): UTC timestamp
+- `kw` (FLOAT): Power in kilowatts
+- `kwh` (FLOAT): Energy in kilowatt-hours
+- `mmbtu` (FLOAT): Energy in million British thermal units
+- `mtco2e` (FLOAT): Carbon dioxide equivalent in metric tons avoided
+
+### `dry_bridge_solar_raw`
+- `timestamp` (TEXT): Original timestamp string
+- `name` (TEXT): Measurement source name
+- `type` (TEXT): Measurement type
+- `units` (TEXT): Units of measurement
+- `value` (FLOAT): Raw measurement value
+
+## Data Export
+
+Export processed data to CSV:
+
 ```sql
-CREATE USER dev_user WITH PASSWORD 'Password123!@#';
-CREATE DATABASE dry_bridge_db OWNER dev_user;
-GRANT ALL PRIVILEGES ON DATABASE dry_bridge_db TO dev_user;
+\copy (SELECT * FROM dry_bridge_solar_processed ORDER BY timestamp) TO 'solar_production_export.csv' WITH CSV HEADER;
 ```
 
-2. Take `example.env` and create a copy called `.env` 
-Update the variables with your database credentials.
+## Development
 
-### Running the PostgreSQL Scraper
+### Development Setup
 
-The `postgres_scrape.py` script supports the same time range options as `scrape.py`:
-
-```
-python postgres_scrape.py -r 3day
+```bash
+# Install with development dependencies
+uv sync
 ```
 
-Or with a specific date range:
+### Code Quality
 
-```
-python postgres_scrape.py -s 2023-08-31 -e 2024-08-01
-```
+This project uses several tools for code quality:
 
-### Database Schema
+```bash
+# Linting with ruff
+uv run ruff check .
 
-The script creates a table called `solar_production` with the following structure:
-- `timestamp`: TIMESTAMP (Primary Key)
-- `kw`: FLOAT (Power in kilowatts)
-- `kwh`: FLOAT (Energy in kilowatt-hours)
-- `mmbtu`: FLOAT (Energy in million British thermal units)
-- `mtco2e`: FLOAT (Carbon dioxide equivalent in metric tons)
+# Code formatting with ruff
+uv run ruff format .
 
-### Data Export
+# Type checking
+uv run mypy src/
 
-To export the data from the database to a CSV file:
-
-```sql
-\copy (SELECT * FROM solar_production ORDER BY timestamp) TO 'solar_production_export.csv' WITH CSV HEADER;
+# Dependency checking
+uv run deptry .
 ```
 
 ### Testing
 
-The project includes test cases in the `tests` directory. Run the tests using:
+Run the test suite:
+
+```bash
+# Run all tests
+uv run pytest
+
+# Run with coverage
+uv run pytest --cov=dry_bridge
+
+# Run specific test file
+uv run pytest tests/transform_test.py
+```
+
+**Note**: Tests require a test database named `test_dry_bridge_db` with the same user credentials.
+
+## Project Structure
 
 ```
-pytest tests/
+src/dry_bridge/
+├── __init__.py          # Package initialization and documentation
+├── __main__.py          # CLI application entry point
+├── scrape.py           # Web scraping functionality
+├── transform.py        # Data transformation and calculations
+└── load.py             # Database operations and loading
+
+tests/
+├── data/               # Test data files
+└── transform_test.py   # Unit tests
+
+# Configuration files
+├── pyproject.toml      # Project metadata and dependencies
+├── mise.toml          # Tool version management
+├── uv.lock            # Locked dependency versions
+└── .env.example       # Environment variable template
 ```
 
-Note: Tests require a test database named `test_dry_bridge_db` with the same user credentials as the main database.
+## Troubleshooting
+
+### Common Issues
+
+1. **Authentication Errors**: The scraper relies on session cookies from the dashboard. If you encounter authentication issues, the dashboard may have changed its authentication mechanism.
+
+2. **Database Connection**: Ensure PostgreSQL is running and your credentials in `.env` are correct.
+
+3. **Missing Data**: Some days may have no data available from the solar farm. This is normal and will be logged as failed downloads.
+
+4. **Timezone Issues**: The application handles Eastern time to UTC conversion automatically, accounting for daylight saving time transitions.
+
+### Logging
+
+The application uses Python's standard logging. To increase verbosity:
+
+```python
+import logging
+logging.basicConfig(level=logging.INFO)
+```
+
+## License
+
+This project is for internal use with the Dry Bridge solar farm data monitoring.
