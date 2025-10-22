@@ -1,3 +1,11 @@
+"""
+Web scraping module for extracting solar production data.
+
+This module handles the extraction of solar production data from the Dry Bridge
+solar farm dashboard. It manages authentication, retry logic, and data persistence
+for reliable data collection across date ranges.
+"""
+
 import json
 import os
 from dataclasses import dataclass
@@ -15,16 +23,26 @@ MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
 @dataclass
 class Metadata:
     """
-    metadata of the downloads for the raw data
+    Metadata for tracking scraping progress and results.
+
+    This class manages the state of data downloads, including tracking successful
+    and failed downloads, and enabling resume functionality for interrupted scrapes.
     """
 
-    path: Path
-    last_start: datetime | None
-    success: list[str]
-    failed: list[str]
+    path: Path  # Path to the metadata file on disk
+    last_start: datetime | None  # The last successfully processed start date
+    success: list[
+        str
+    ]  # List of successfully downloaded date strings (YYYY-MM-DD format)
+    failed: list[str]  # List of failed download date strings (YYYY-MM-DD format)
 
     def save(self):
-        """save data to disk"""
+        """
+        Save metadata to disk as JSON.
+
+        Persists the current state of the scraping metadata to enable
+        resuming interrupted scrapes and tracking download history.
+        """
         with open(self.path, "w") as f:
             date_str = self.last_start.strftime("%Y-%m-%d") if self.last_start else None
             f.write(
@@ -39,7 +57,15 @@ class Metadata:
 
     @staticmethod
     def load(path: Path):
-        """load metadata from disk"""
+        """
+        Load metadata from disk or create new instance if file doesn't exist.
+
+        Args:
+            path: Path to the metadata JSON file
+
+        Returns:
+            Metadata: Loaded metadata instance or new empty instance
+        """
         try:
             with open(path, "r") as f:
                 j = json.loads(f.read())
@@ -60,7 +86,17 @@ def scrape(
     output: Path,
 ):
     """
-    loads up the different arguments and kicks off the scrape
+    Main scraping orchestration function.
+
+    Coordinates the scraping process by setting up output directories,
+    loading metadata, and determining the appropriate date range based
+    on resume functionality.
+
+    Args:
+        start: Start date for scraping
+        end: End date for scraping
+        resume: Whether to resume from last successful download
+        output: Directory to save downloaded files
     """
     if not output.exists():
         output.mkdir()
@@ -80,7 +116,20 @@ def scrape_range(
     start: datetime, end: datetime, output: Path, metadata: Metadata
 ) -> Metadata:
     """
-    this function is responsible for downloading all the CSV files and updating metadata
+    Download solar data for each day in the specified date range.
+
+    This function performs the actual HTTP requests to the solar dashboard API,
+    handling authentication through cookies and managing retry logic for failed
+    requests. Each day's data is saved as a separate JSON file.
+
+    Args:
+        start: Start date for the range
+        end: End date for the range
+        output: Directory to save JSON files
+        metadata: Metadata object to track progress
+
+    Returns:
+        Metadata: Updated metadata with success/failure tracking
     """
     home_url = "https://hmi.alsoenergy.com/powerhmi/publicdisplay/be7a7484-25f9-4b3e-a3ac-637ca6111cf3/main?arg=NTk0NDk%3d&lang=en-US"
     api_url = "https://hmi.alsoenergy.com/api/view/sourcedata/C44014"
@@ -128,6 +177,18 @@ def scrape_range(
 
 
 def read_scrape(output: Path) -> list[dict[str, Any]]:
+    """
+    Read all scraped JSON files from the output directory.
+
+    Loads and parses all JSON files (excluding metadata) from the specified
+    directory, sorting them by date to ensure chronological processing.
+
+    Args:
+        output: Directory containing the scraped JSON files
+
+    Returns:
+        list[dict]: List of parsed JSON data from all files
+    """
     data = []
     files = [f for f in output.glob("*.json") if "metadata" not in f.name]
     files = sorted(files, key=lambda f: datetime.fromisoformat(f.stem))
@@ -137,4 +198,13 @@ def read_scrape(output: Path) -> list[dict[str, Any]]:
 
 
 def read_scrape_file(fname: Path) -> dict[str, Any]:
+    """
+    Read and parse a single scraped JSON file.
+
+    Args:
+        fname: Path to the JSON file to read
+
+    Returns:
+        dict: Parsed JSON data from the file
+    """
     return json.loads(fname.read_text())
