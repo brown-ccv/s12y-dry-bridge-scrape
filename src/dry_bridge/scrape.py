@@ -7,6 +7,7 @@ for reliable data collection across date ranges.
 """
 
 import json
+import logging
 import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -17,7 +18,11 @@ import httpx
 from httpx_retries import RetryTransport, Retry
 
 
+logger = logging.getLogger(__name__)
+
 MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
+HOME_URL = "https://hmi.alsoenergy.com/powerhmi/publicdisplay/be7a7484-25f9-4b3e-a3ac-637ca6111cf3/main?arg=NTk0NDk%3d&lang=en-US"
+API_URL = "https://hmi.alsoenergy.com/api/view/sourcedata/C44014"
 
 
 @dataclass
@@ -43,8 +48,13 @@ class Metadata:
         Persists the current state of the scraping metadata to enable
         resuming interrupted scrapes and tracking download history.
         """
+        logger.debug(f"Saving metadata to {self.path}")
+        logger.debug(
+            f"Success count: {len(self.success)}, Failed count: {len(self.failed)}"
+        )
         with open(self.path, "w") as f:
             date_str = self.last_start.strftime("%Y-%m-%d") if self.last_start else None
+            logger.debug(f"Last start date: {date_str}")
             f.write(
                 json.dumps(
                     {
@@ -66,9 +76,13 @@ class Metadata:
         Returns:
             Metadata: Loaded metadata instance or new empty instance
         """
+        logger.debug(f"Loading metadata from {path}")
         try:
             with open(path, "r") as f:
                 j = json.loads(f.read())
+                logger.debug(
+                    f"Loaded metadata: last_start={j['last_start']}, success={len(j['success'])}, failed={len(j['failed'])}"
+                )
                 return Metadata(
                     last_start=j["last_start"],
                     success=j["success"],
@@ -76,6 +90,7 @@ class Metadata:
                     path=path,
                 )
         except FileNotFoundError:
+            logger.info(f"Metadata file {path} not found, creating new metadata")
             return Metadata(last_start=None, success=[], failed=[], path=path)
 
 
@@ -98,29 +113,49 @@ def scrape(
         resume: Whether to resume from last successful download
         output: Directory to save downloaded files
     """
+    logger.info(
+        f"Starting scrape from {start} to {end}, resume={resume}, output={output}"
+    )
+
     if not output.exists():
+        logger.info(f"Creating output directory: {output}")
         output.mkdir()
 
     metadata = Metadata.load(Path(output) / "metadata.json")
     last_start = metadata.last_start
+    logger.debug(f"Last start from metadata: {last_start}")
+
+    client = scrape_client()
 
     if start and resume and last_start:
-        metadata = scrape_range(last_start, end, output, metadata)
+        logger.info(f"Resuming from last start date: {last_start}")
+        metadata = scrape_range(client, last_start, end, output, metadata)
     else:
-        metadata = scrape_range(start, end, output, metadata)
+        logger.info(f"Starting fresh scrape from: {start}")
+        metadata = scrape_range(client, start, end, output, metadata)
 
     metadata.save()
+    logger.info("Scrape completed and metadata saved")
 
 
-def scrape_date(date: datetime) -> dict[str, Any]:
-    home_url = "https://hmi.alsoenergy.com/powerhmi/publicdisplay/be7a7484-25f9-4b3e-a3ac-637ca6111cf3/main?arg=NTk0NDk%3d&lang=en-US"
-    api_url = "https://hmi.alsoenergy.com/api/view/sourcedata/C44014"
+def scrape_client() -> httpx.Client:
     retry = Retry(total=MAX_RETRIES, backoff_factor=0.5)
     client = httpx.Client(transport=RetryTransport(retry=retry))
 
+    logger.debug(f"Getting auth cookies from: {HOME_URL}")
     # NOTE(@broarr): This is to get the auth cookies only
-    result = client.get(home_url, follow_redirects=True)
+    result = client.get(HOME_URL, follow_redirects=True)
+    logger.debug(f"Auth request status: {result.status_code}")
+
+    return client
+
+
+def scrape_date(client: httpx.Client, date: datetime) -> dict[str, Any]:
+    logger.debug(f"Scraping data for date: {date}")
+
     date_str = date.strftime("%Y-%m-%d")
+    logger.debug(f"Formatted date string: {date_str}")
+
     req_params = {
         "type": 0,
         "parameters": [
@@ -134,13 +169,26 @@ def scrape_date(date: datetime) -> dict[str, Any]:
         "id": 15,
         "pollInterval": 5,
     }
-    headers = {"Referer": home_url}
-    result = client.post(api_url, headers=headers, json=req_params, timeout=10.0)
-    return result.json()
+    headers = {"Referer": HOME_URL}
+    logger.debug(f"Making API request to: {API_URL}")
+    logger.debug(f"Request parameters: {req_params}")
+
+    result = client.post(API_URL, headers=headers, json=req_params, timeout=10.0)
+    logger.debug(f"API request status: {result.status_code}")
+
+    response_data = result.json()
+    data_count = len(response_data.get("data", []))
+    logger.debug(f"Received {data_count} data points for {date_str}")
+
+    return response_data
 
 
 def scrape_range(
-    start: datetime, end: datetime, output: Path, metadata: Metadata
+    client: httpx.Client,
+    start: datetime,
+    end: datetime,
+    output: Path,
+    metadata: Metadata,
 ) -> Metadata:
     """
     Download solar data for each day in the specified date range.
@@ -158,22 +206,50 @@ def scrape_range(
     Returns:
         Metadata: Updated metadata with success/failure tracking
     """
+    logger.info(f"Scraping range from {start} to {end}")
     current_date = start
+    day_count = 0
+
     while current_date < end:
         metadata.last_start = current_date
         current_date += timedelta(days=1)
-        date_str = current_date.strftime("%Y-%M-%d")
+        day_count += 1
+
+        date_str = current_date.strftime("%Y-%m-%d")
+        logger.info(f"Processing day {day_count}: {date_str}")
+
         try:
-            data = scrape_date(current_date)
+            logger.debug(f"Calling scrape_date for {current_date}")
+            data = scrape_date(client, current_date)
+            print(data)
+
             if len(data["data"]) > 0:
+                logger.info(
+                    f"Successfully scraped {len(data['data'])} data points for {date_str}"
+                )
                 metadata.success.append(date_str)
-                with open(output / f"{date_str}.json", "w") as f:
+
+                output_file = output / f"{date_str}.json"
+                logger.debug(f"Writing data to file: {output_file}")
+
+                with open(output_file, "w") as f:
                     f.write(json.dumps(data, indent=2, sort_keys=True))
+
+                logger.debug(
+                    f"Successfully wrote {output_file.stat().st_size} bytes to {output_file}"
+                )
             else:
-                raise Exception(f"no data in response body for date {date_str}")
-        except (httpx.HTTPError, Exception):
+                error_msg = f"no data in response body for date {date_str}"
+                logger.warning(f"✗ {error_msg}")
+                raise Exception(error_msg)
+
+        except (httpx.HTTPError, Exception) as e:
+            logger.error(f"✗ Failed to scrape {date_str}: {e}")
             metadata.failed.append(date_str)
 
+    logger.info(
+        f"Completed scraping {day_count} days. Success: {len(metadata.success)}, Failed: {len(metadata.failed)}"
+    )
     return metadata
 
 
@@ -190,11 +266,19 @@ def read_scrape(output: Path) -> list[dict[str, Any]]:
     Returns:
         list[dict]: List of parsed JSON data from all files
     """
+    logger.debug(f"Reading scraped files from {output}")
     data = []
     files = [f for f in output.glob("*.json") if "metadata" not in f.name]
+    logger.info(f"Found {len(files)} JSON files to read")
+
     files = sorted(files, key=lambda f: datetime.fromisoformat(f.stem))
+    logger.debug(f"Processing files in chronological order: {[f.name for f in files]}")
+
     for f in files:
+        logger.debug(f"Reading file: {f}")
         data.append(read_scrape_file(f))
+
+    logger.info(f"Successfully read {len(data)} data files")
     return data
 
 
@@ -208,4 +292,13 @@ def read_scrape_file(fname: Path) -> dict[str, Any]:
     Returns:
         dict: Parsed JSON data from the file
     """
-    return json.loads(fname.read_text())
+    logger.debug(f"Reading scrape file: {fname}")
+    try:
+        data = json.loads(fname.read_text())
+        logger.debug(
+            f"Successfully parsed {fname}, data points: {len(data.get('data', []))}"
+        )
+        return data
+    except Exception as e:
+        logger.error(f"Failed to read/parse {fname}: {e}")
+        raise

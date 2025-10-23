@@ -7,6 +7,7 @@ table creation, and data insertion for both raw and processed solar data.
 It uses PostgreSQL as the backend database with psycopg2 for connectivity.
 """
 
+import logging
 import os
 from dataclasses import dataclass, asdict
 
@@ -14,6 +15,9 @@ from psycopg2 import connect, Error
 from psycopg2.extensions import connection
 
 from .transform import ProcessedRow, RawRow
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -47,6 +51,7 @@ def database_connection() -> connection:
     Raises:
         Exception: If connection fails or table creation fails
     """
+    logger.debug("Loading database configuration from environment")
     try:
         db_config = DatabaseConfig(
             host=os.environ["DB_HOST"],
@@ -55,10 +60,17 @@ def database_connection() -> connection:
             user=os.environ["DB_USER"],
             password=os.environ["DB_PASSWORD"],
         )
-    except KeyError:
+        logger.debug(
+            f"Database config: {db_config.host}:{db_config.port}/{db_config.database} as {db_config.user}"
+        )
+    except KeyError as e:
+        logger.error(f"Missing database environment variable: {e}")
         raise Exception("invalid database configuration, double check your environment")
 
     try:
+        logger.info(
+            f"Connecting to database: {db_config.host}:{db_config.port}/{db_config.database}"
+        )
         connection = connect(
             host=db_config.host,
             port=db_config.port,
@@ -66,9 +78,11 @@ def database_connection() -> connection:
             user=db_config.user,
             password=db_config.password,
         )
+        logger.info("Database connection established successfully")
         create_tables(connection)
         return connection
     except Error as e:
+        logger.error(f"Database connection failed: {e}")
         raise Exception(f"error connecting to database: {e}")
 
 
@@ -86,6 +100,7 @@ def create_tables(conn: connection) -> None:
     Raises:
         Exception: If table creation fails
     """
+    logger.debug("Creating database tables if they don't exist")
     try:
         cursor = conn.cursor()
 
@@ -110,7 +125,9 @@ def create_tables(conn: connection) -> None:
         cursor.execute(create_table_query)
         conn.commit()
         cursor.close()
+        logger.debug("Database tables created successfully")
     except Error as e:
+        logger.error(f"Failed to create tables: {e}")
         raise Exception(f"error creating tables: {e}")
 
 
@@ -175,10 +192,15 @@ def load_raw(
     Raises:
         Error: If any insertion fails, causing transaction rollback
     """
+    logger.info(f"Loading {len(data)} raw data rows into database")
     try:
-        for row in data:
+        for i, row in enumerate(data):
+            if i % 1000 == 0:
+                logger.debug(f"Inserted {i}/{len(data)} raw rows")
             insert_raw_row(conn, row)
+        logger.info(f"Successfully loaded {len(data)} raw data rows")
     except Error as error:
+        logger.error(f"Failed to load raw data: {error}")
         conn.rollback()
         raise error
 
@@ -197,15 +219,21 @@ def load_transformed(conn: connection, data: list[ProcessedRow]) -> None:
     Raises:
         Error: If any insertion fails, causing transaction rollback
     """
+    logger.info(f"Loading {len(data)} processed data rows into database")
     try:
-        for row in data:
+        for i, row in enumerate(data):
+            if i % 1000 == 0:
+                logger.debug(f"Inserted {i}/{len(data)} processed rows")
             insert_processed_row(conn, row)
+        logger.info(f"Successfully loaded {len(data)} processed data rows")
     except Error as error:
+        logger.error(f"Failed to load processed data: {error}")
         conn.rollback()
         raise error
 
 
 def most_recent_record(conn: connection) -> ProcessedRow | None:
+    logger.debug("Querying for most recent processed record")
     cursor = conn.cursor()
 
     try:
@@ -219,8 +247,10 @@ def most_recent_record(conn: connection) -> ProcessedRow | None:
         record = cursor.fetchone()
 
         if record is None:
+            logger.info("No processed records found in database")
             return None
 
+        logger.debug(f"Most recent record timestamp: {record[0]}")
         return ProcessedRow(
             timestamp=record[0],
             kw=record[1],
@@ -228,6 +258,7 @@ def most_recent_record(conn: connection) -> ProcessedRow | None:
             mmbtu=record[3],
             mtco2e=record[4],
         )
-    except Error:
+    except Error as e:
+        logger.error(f"Failed to query most recent record: {e}")
         conn.rollback()
         raise Error

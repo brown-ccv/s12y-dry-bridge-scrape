@@ -33,7 +33,7 @@ load_dotenv()
 logging.basicConfig(
     format="%(levelname)s [%(asctime)s] %(name)s - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
-    level=logging.CRITICAL,
+    level=logging.DEBUG,
 )
 
 
@@ -56,13 +56,20 @@ def extract(
         resume: Whether to resume from the last successful download
         output: Directory to save the extracted JSON files
     """
+    logger = logging.getLogger(__name__)
+    logger.info(
+        f"Starting extract command: start={start}, end={end}, resume={resume}, output={output}"
+    )
+
     start_date = START_OF_OPERATION
     if start != "all":
         start_date = datetime.fromisoformat(start)
+        logger.debug(f"Parsed start date: {start_date}")
 
     end_date = datetime.now()
     if end != "now":
         end_date = datetime.fromisoformat(end)
+        logger.debug(f"Parsed end date: {end_date}")
 
     scrape(start=start_date, end=end_date, resume=resume, output=Path(output))
 
@@ -89,15 +96,24 @@ def load(
     Raises:
         Exception: If database configuration is invalid or missing from environment
     """
+    logger = logging.getLogger(__name__)
+    logger.info(
+        f"Starting load command: output={output}, raw={raw}, transform={transform}"
+    )
+
     conn = database_connection()
     data = read_scrape(Path(output))
     raw_data = list(chain.from_iterable([flatten_raw_data(d) for d in data]))
+    logger.info(f"Processed {len(data)} files into {len(raw_data)} raw data rows")
 
     if raw:
+        logger.info("Loading raw data into database")
         load_raw(conn, raw_data)
         conn.commit()
+        logger.info("Raw data loaded and committed")
 
     if transform:
+        logger.info("Processing and loading transformed data")
         # NOTE(@broarr): We dedup the records because of what appears to be a firmware
         #   bug in the solar farm sensors. Daylight savings is accounted for at the wrong
         #   time. Simply converting to UTC does not fix the problem, but luckily for us
@@ -105,23 +121,37 @@ def load(
         transformed_data = sorted(
             list(set(transform_raw_data(raw_data))), key=lambda x: x.timestamp
         )
+        logger.info(
+            f"Deduped {len(raw_data)} raw rows into {len(transformed_data)} transformed rows"
+        )
         load_transformed(conn, transformed_data)
         conn.commit()
+        logger.info("Transformed data loaded and committed")
 
 
 @app.command()
 def refresh() -> None:
+    logger = logging.getLogger(__name__)
+    logger.info("Starting refresh command")
+
     conn = database_connection()
 
     row = most_recent_record(conn)
     timestamp = row.timestamp if row else START_OF_OPERATION
+    logger.info(f"Most recent record timestamp: {timestamp}, starting from there")
+
     missing_dates = days_from_timestamp(timestamp)
+    logger.info(f"Scraping {len(missing_dates)} missing dates")
+
     results = [scrape_date(d) for d in missing_dates]
     raw_data = list(chain.from_iterable([flatten_raw_data(d) for d in results]))
+    logger.info(f"Scraped {len(results)} days, got {len(raw_data)} raw data points")
 
     delta = timedelta(minutes=15)
     current_timestamp = timestamp + delta
     last_available_timestamp = round_down_15min(local_now())
+    logger.debug(f"Processing from {current_timestamp} to {last_available_timestamp}")
+
     raw_rows = []
     while current_timestamp <= last_available_timestamp:
         found = False
@@ -130,16 +160,20 @@ def refresh() -> None:
                 found = True
                 raw_rows.append(raw_row)
         if not found:
-            print("did not find record for '{current_timestamp}'")
+            logger.warning(f"Did not find record for '{current_timestamp}'")
+        current_timestamp += delta
 
+    logger.info(f"Loading {len(raw_rows)} raw rows into database")
     load_raw(conn, raw_rows)
     conn.commit()
 
     transformed_data = sorted(
         list(set(transform_raw_data(raw_rows))), key=lambda x: x.timestamp
     )
+    logger.info(f"Loading {len(transformed_data)} transformed rows into database")
     load_transformed(conn, transformed_data)
     conn.commit()
+    logger.info("Refresh completed successfully")
 
 
 def main() -> None:
