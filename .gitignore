@@ -17,3 +17,5 @@ build/
 *.swp
 .vscode/
 .idea/
+.github/
+.env*

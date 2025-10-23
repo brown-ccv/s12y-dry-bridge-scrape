@@ -1,0 +1,52 @@
+{
+  "data": [
+    {
+      "color": "#154672",
+      "data": [
+        ["2023-10-31T00:00:00", -15.848],
+        ["2023-10-31T00:15:00", -15.9647]
+      ],
+      "diameter": 0,
+      "fillColor": "#154672",
+      "fitExponent": 0,
+      "lineColor": "#154672",
+      "lineWidth": 2.0,
+      "name": "L0 - Production Meter 1 (Pad 1)",
+      "stacking": "normal",
+      "type": "column",
+      "units": "Kilowatts",
+      "visible": true,
+      "xAxis": "0",
+      "xAxisType": "datetime",
+      "yAxis": "1",
+      "yAxisMax": null,
+      "yAxisMin": 0.0,
+      "yAxisType": "number"
+    },
+    {
+      "color": "#5C10FE",
+      "data": [
+        ["2023-10-31T00:00:00", null],
+        ["2023-10-31T00:15:00", null]
+      ],
+      "diameter": 0,
+      "fillColor": "#5C10FE",
+      "fitExponent": 0,
+      "lineColor": "#5C10FE",
+      "lineWidth": 2.0,
+      "name": "SEL-735 SPARE PARTS 3",
+      "stacking": "normal",
+      "type": "column",
+      "units": "Kilowatts",
+      "visible": true,
+      "xAxis": "0",
+      "xAxisType": "datetime",
+      "yAxis": "1",
+      "yAxisMax": null,
+      "yAxisMin": 0.0,
+      "yAxisType": "number"
+    }
+  ],
+  "key": "{\"parameters\":[{\"name\":\"Context\",\"type\":3,\"value\":\"site\"},{\"name\":\"Source\",\"type\":1,\"value\":\"59449\"},{\"name\":\"Start\",\"type\":7,\"value\":\"2023-10-31\"},{\"name\":\"End\",\"type\":7,\"value\":\"2023-10-31\"}],\"type\":0,\"id\":15,\"name\":\"\",\"method\":\"\",\"url\":\"\",\"connection\":\"\",\"query\":\"\",\"json\":\"\",\"pollInterval\":5.0,\"series\":[]}",
+  "lastChanged": "2025-10-14T17:24:40Z"
+}

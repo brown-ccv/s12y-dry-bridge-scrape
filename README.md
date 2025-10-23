@@ -36,6 +36,9 @@ DB_PORT=5432
 DB_NAME=dry_bridge_db
 DB_USER=your_username
 DB_PASSWORD=your_password
+
+# Retry tracking configuration
+MAX_FETCH_ATTEMPTS=5  # Maximum retry attempts per date before skipping
 ```
 
 ### Database Setup
@@ -55,14 +58,13 @@ Extract solar data from the web dashboard:
 dry-bridge extract
 
 # Extract data for a specific date range
-dry-bridge extract -s 2023-08-01 -e 2024-08-01
-
-# Resume a previous extraction
-dry-bridge extract --resume
+dry-bridge extract 2023-08-01 2024-08-01
 
 # Extract to a custom output directory
-dry-bridge extract --output ./custom_output
+dry-bridge extract all now ./custom_output
 ```
+
+Re-run the extract command to continue - it automatically skips existing files.
 
 ### Loading Data
 
@@ -91,9 +93,20 @@ For a complete ETL run:
 dry-bridge extract && dry-bridge load
 ```
 
+### Migration Note
+
+**Changed in latest version:**
+
+The `--resume` flag has been removed from the `extract` command. The command is now idempotent - just re-run `extract` and it will automatically skip any files that already exist.
+
+Old `metadata.json` files are no longer used and can be deleted.
+
+The `refresh` command now automatically detects and fills gaps in the data, with intelligent retry tracking to avoid repeatedly fetching dates that consistently fail or return no data.
+```
+
 ## Database Schema
 
-The application creates two tables:
+The application creates three tables:
 
 ### `dry_bridge_solar_processed`
 - `timestamp` (TIMESTAMP, PRIMARY KEY): UTC timestamp
@@ -108,6 +121,11 @@ The application creates two tables:
 - `type` (TEXT): Measurement type
 - `units` (TEXT): Units of measurement
 - `value` (FLOAT): Raw measurement value
+
+### `dry_bridge_fetch_attempts`
+- `date` (DATE, PRIMARY KEY): Date of fetch attempt
+- `attempt_count` (INTEGER): Number of fetch attempts
+- `status` (TEXT): Status of last attempt ('empty', 'error', or 'success')
 
 ## Data Export
 

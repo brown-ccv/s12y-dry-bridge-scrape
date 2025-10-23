@@ -108,13 +108,12 @@ def transform_raw_data(data: list[RawRow]) -> list[ProcessedRow]:
     Returns:
         list[ProcessedRow]: List of processed rows with calculated metrics
     """
-    logger.debug(f"Transforming {len(data)} raw data rows")
     inverter_data = [d for d in data if "Inverter" in d.name]
-    logger.debug(f"Found {len(inverter_data)} inverter data rows to process")
-
     processed = [process_inverter_data(d.timestamp, d.value) for d in inverter_data]
 
-    logger.info(f"Transformed {len(processed)} raw rows into processed data")
+    logger.info(
+        f"Transformed {len(inverter_data)} inverter rows into {len(processed)} processed records"
+    )
     return processed
 
 
@@ -131,17 +130,11 @@ def flatten_raw_data(raw: dict[str, Any]) -> list[RawRow]:
     Returns:
         list[RawRow]: Flattened list of individual measurement rows
     """
-    logger.debug(
-        f"Flattening raw data with {len(raw.get('data', []))} top-level entries"
-    )
     data = []
     for x in raw["data"]:
         name = str(x["name"])
         units = str(x["units"])
         type = str(x["type"])
-        logger.debug(
-            f"Processing {name} ({type}, {units}) with {len(x['data'])} data points"
-        )
 
         for y in x["data"]:
             row = RawRow(
@@ -153,7 +146,9 @@ def flatten_raw_data(raw: dict[str, Any]) -> list[RawRow]:
             )
             data.append(row)
 
-    logger.debug(f"Flattened into {len(data)} total data rows")
+    logger.debug(
+        f"Flattened {len(raw.get('data', []))} series into {len(data)} total rows"
+    )
     return data
 
 

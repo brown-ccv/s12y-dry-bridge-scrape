@@ -9,7 +9,6 @@ for reliable data collection across date ranges.
 import json
 import logging
 import os
-from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -25,117 +24,32 @@ HOME_URL = "https://hmi.alsoenergy.com/powerhmi/publicdisplay/be7a7484-25f9-4b3e
 API_URL = "https://hmi.alsoenergy.com/api/view/sourcedata/C44014"
 
 
-@dataclass
-class Metadata:
-    """
-    Metadata for tracking scraping progress and results.
-
-    This class manages the state of data downloads, including tracking successful
-    and failed downloads, and enabling resume functionality for interrupted scrapes.
-    """
-
-    path: Path  # Path to the metadata file on disk
-    last_start: datetime | None  # The last successfully processed start date
-    success: list[
-        str
-    ]  # List of successfully downloaded date strings (YYYY-MM-DD format)
-    failed: list[str]  # List of failed download date strings (YYYY-MM-DD format)
-
-    def save(self) -> None:
-        """
-        Save metadata to disk as JSON.
-
-        Persists the current state of the scraping metadata to enable
-        resuming interrupted scrapes and tracking download history.
-        """
-        logger.debug(f"Saving metadata to {self.path}")
-        logger.debug(
-            f"Success count: {len(self.success)}, Failed count: {len(self.failed)}"
-        )
-        with open(self.path, "w") as f:
-            date_str = self.last_start.strftime("%Y-%m-%d") if self.last_start else None
-            logger.debug(f"Last start date: {date_str}")
-            f.write(
-                json.dumps(
-                    {
-                        "last_start": date_str,
-                        "success": self.success,
-                        "failed": self.failed,
-                    }
-                )
-            )
-
-    @staticmethod
-    def load(path: Path) -> "Metadata":
-        """
-        Load metadata from disk or create new instance if file doesn't exist.
-
-        Args:
-            path: Path to the metadata JSON file
-
-        Returns:
-            Metadata: Loaded metadata instance or new empty instance
-        """
-        logger.debug(f"Loading metadata from {path}")
-        try:
-            with open(path, "r") as f:
-                j = json.loads(f.read())
-                logger.debug(
-                    f"Loaded metadata: last_start={j['last_start']}, success={len(j['success'])}, failed={len(j['failed'])}"
-                )
-                return Metadata(
-                    last_start=j["last_start"],
-                    success=j["success"],
-                    failed=j["failed"],
-                    path=path,
-                )
-        except FileNotFoundError:
-            logger.info(f"Metadata file {path} not found, creating new metadata")
-            return Metadata(last_start=None, success=[], failed=[], path=path)
-
-
 def scrape(
     start: datetime,
     end: datetime,
-    resume: bool,
     output: Path,
 ) -> None:
     """
-    Main scraping orchestration function.
+    Scrape date range and save to files.
 
-    Coordinates the scraping process by setting up output directories,
-    loading metadata, and determining the appropriate date range based
-    on resume functionality.
+    This is a one-time operation for historical data import. Re-run to
+    resume - it automatically skips existing files.
 
     Args:
         start: Start date for scraping
         end: End date for scraping
-        resume: Whether to resume from last successful download
         output: Directory to save downloaded files
     """
-    logger.info(
-        f"Starting scrape from {start} to {end}, resume={resume}, output={output}"
-    )
+    logger.info(f"Scraping from {start} to {end}, output={output}")
 
     if not output.exists():
         logger.info(f"Creating output directory: {output}")
         output.mkdir()
 
-    metadata = Metadata.load(Path(output) / "metadata.json")
-    last_start = metadata.last_start
-    logger.debug(f"Last start from metadata: {last_start}")
-
     client = scrape_client()
+    scrape_range(client, start, end, output)
 
-    if start and resume and last_start:
-        logger.info(f"Resuming from last start date: {last_start}")
-        metadata = scrape_range(client, last_start, end, output, metadata)
-    else:
-        logger.info(f"Starting fresh scrape from: {start}")
-        metadata = scrape_range(client, start, end, output, metadata)
-
-    metadata.save()
-    logger.info("Scrape completed and metadata saved")
+    logger.info("Scrape completed")
 
 
 def scrape_client() -> httpx.Client:
@@ -188,77 +102,66 @@ def scrape_range(
     start: datetime,
     end: datetime,
     output: Path,
-    metadata: Metadata,
-) -> Metadata:
+) -> None:
     """
     Download solar data for each day in the specified date range.
 
     This function performs the actual HTTP requests to the solar dashboard API,
-    handling authentication through cookies and managing retry logic for failed
-    requests. Each day's data is saved as a separate JSON file.
+    handling authentication through cookies. Each day's data is saved as a
+    separate JSON file.
 
     Args:
+        client: HTTP client with authentication cookies
         start: Start date for the range
         end: End date for the range
         output: Directory to save JSON files
-        metadata: Metadata object to track progress
-
-    Returns:
-        Metadata: Updated metadata with success/failure tracking
     """
     logger.info(f"Scraping range from {start} to {end}")
     current_date = start
     day_count = 0
 
     while current_date < end:
-        metadata.last_start = current_date
         current_date += timedelta(days=1)
         day_count += 1
 
         date_str = current_date.strftime("%Y-%m-%d")
+        output_file = output / f"{date_str}.json"
+
+        if output_file.exists():
+            logger.debug(f"Skipping {date_str}, file already exists")
+            continue
+
         logger.info(f"Processing day {day_count}: {date_str}")
 
         try:
-            logger.debug(f"Calling scrape_date for {current_date}")
             data = scrape_date(client, current_date)
-            print(data)
 
             if len(data["data"]) > 0:
                 logger.info(
                     f"Successfully scraped {len(data['data'])} data points for {date_str}"
                 )
-                metadata.success.append(date_str)
-
-                output_file = output / f"{date_str}.json"
-                logger.debug(f"Writing data to file: {output_file}")
 
                 with open(output_file, "w") as f:
                     f.write(json.dumps(data, indent=2, sort_keys=True))
 
                 logger.debug(
-                    f"Successfully wrote {output_file.stat().st_size} bytes to {output_file}"
+                    f"Wrote {output_file.stat().st_size} bytes to {output_file}"
                 )
             else:
-                error_msg = f"no data in response body for date {date_str}"
-                logger.warning(f"✗ {error_msg}")
-                raise Exception(error_msg)
+                logger.warning(f"No data in response for {date_str}")
 
         except (httpx.HTTPError, Exception) as e:
-            logger.error(f"✗ Failed to scrape {date_str}: {e}")
-            metadata.failed.append(date_str)
+            logger.error(f"Failed to scrape {date_str}: {e}")
 
-    logger.info(
-        f"Completed scraping {day_count} days. Success: {len(metadata.success)}, Failed: {len(metadata.failed)}"
-    )
-    return metadata
+    logger.info(f"Completed scraping {day_count} days")
 
 
 def read_scrape(output: Path) -> list[dict[str, Any]]:
     """
     Read all scraped JSON files from the output directory.
 
-    Loads and parses all JSON files (excluding metadata) from the specified
-    directory, sorting them by date to ensure chronological processing.
+    Loads and parses all JSON files from the specified directory,
+    sorting them by date to ensure chronological processing.
 
     Args:
         output: Directory containing the scraped JSON files
@@ -268,7 +171,7 @@ def read_scrape(output: Path) -> list[dict[str, Any]]:
     """
     logger.debug(f"Reading scraped files from {output}")
     data = []
-    files = [f for f in output.glob("*.json") if "metadata" not in f.name]
+    files = list(output.glob("*.json"))
     logger.info(f"Found {len(files)} JSON files to read")
 
     files = sorted(files, key=lambda f: datetime.fromisoformat(f.stem))

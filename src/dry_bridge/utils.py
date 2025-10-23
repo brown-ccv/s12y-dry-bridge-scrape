@@ -1,30 +1,11 @@
 import logging
+import os
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
-START_OF_OPERATION = datetime(2023, 7, 1)
-
-
-def days_from_timestamp(timestamp: datetime) -> list[datetime]:
-    # NOTE(@broarr): We need to move things into local time from
-    #   UTC to make sure we query for the right stuff
-    logger.debug(f"Calculating days from timestamp: {timestamp}")
-    tz = ZoneInfo("America/New_York")
-    local_now = datetime.now().astimezone(tz)
-    local_current = timestamp.astimezone(tz)
-    delta = timedelta(days=1)
-    logger.debug(
-        f"Local now: {local_now}, Local current: {local_current}, Local current < local now: {local_current < local_now}"
-    )
-
-    dates = []
-    while local_current <= local_now:
-        dates.append(local_current)
-        local_current += delta
-
-    logger.info(f"Generated {len(dates)} dates from {timestamp} to {local_now}")
-    return dates
+START_OF_OPERATION = datetime(2023, 7, 1, tzinfo=ZoneInfo("America/New_York"))
+MAX_FETCH_ATTEMPTS = int(os.getenv("MAX_FETCH_ATTEMPTS", "5"))
 
 
 def round_down_15min(timestamp: datetime) -> datetime:
