@@ -47,7 +47,11 @@ The database is setup and managed by the DBA team. The Office of Sustainability 
 
 ## Usage
 
-The application provides a CLI interface with two main commands: `extract` and `load`.
+The application provides a CLI interface with three main commands: `extract`, `load`, and `refresh`.
+
+### Docker Deployment
+
+For production deployment in Kubernetes as a CronJob, see [docs/DOCKER.md](./docs/DOCKER.md)
 
 ### Extracting Data
 
@@ -84,24 +88,28 @@ dry-bridge load --no-raw
 dry-bridge load ./custom_output
 ```
 
+### Refreshing Data
+
+Fill gaps and add new data (recommended for scheduled jobs):
+
+```bash
+# Query database for missing timestamps and fill gaps
+dry-bridge refresh
+```
+
+The refresh command is designed to run on a schedule (e.g., every 15 minutes via cron or Kubernetes CronJob). It automatically:
+- Detects missing 15-minute intervals in the database
+- Scrapes only the necessary dates to fill gaps
+- Adds new data as it becomes available
+- Tracks retry attempts to avoid repeatedly scraping dates that consistently fail
+
 ### Complete ETL Pipeline
 
-For a complete ETL run:
+For a complete initial ETL run:
 
 ```bash
 # Extract all data and load into database
 dry-bridge extract && dry-bridge load
-```
-
-### Migration Note
-
-**Changed in latest version:**
-
-The `--resume` flag has been removed from the `extract` command. The command is now idempotent - just re-run `extract` and it will automatically skip any files that already exist.
-
-Old `metadata.json` files are no longer used and can be deleted.
-
-The `refresh` command now automatically detects and fills gaps in the data, with intelligent retry tracking to avoid repeatedly fetching dates that consistently fail or return no data.
 ```
 
 ## Database Schema
