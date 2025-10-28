@@ -1,5 +1,4 @@
 import unittest
-from datetime import datetime
 from pathlib import Path
 
 from dry_bridge.scrape import read_scrape_file
@@ -12,26 +11,30 @@ class TestTransform(unittest.TestCase):
         expected_rows = [
             RawRow(
                 name="L0 - Production Meter 1 (Pad 1)",
+                timestamp="2023-10-31T00:00:00",
+                type="column",
                 units="Kilowatts",
-                timestamp=datetime.fromisoformat("2023-10-31T00:00:00"),
                 value=-15.848,
             ),
             RawRow(
                 name="L0 - Production Meter 1 (Pad 1)",
+                timestamp="2023-10-31T00:15:00",
+                type="column",
                 units="Kilowatts",
-                timestamp=datetime.fromisoformat("2023-10-31T00:15:00"),
                 value=-15.9647,
             ),
             RawRow(
                 name="SEL-735 SPARE PARTS 3",
+                timestamp="2023-10-31T00:00:00",
+                type="column",
                 units="Kilowatts",
-                timestamp=datetime.fromisoformat("2023-10-31T00:00:00"),
                 value=None,
             ),
             RawRow(
                 name="SEL-735 SPARE PARTS 3",
+                timestamp="2023-10-31T00:15:00",
+                type="column",
                 units="Kilowatts",
-                timestamp=datetime.fromisoformat("2023-10-31T00:15:00"),
                 value=None,
             ),
         ]

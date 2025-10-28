@@ -6,10 +6,14 @@ dashboard API into structured formats suitable for analysis and storage.
 It includes timezone conversion, unit calculations, and data flattening operations.
 """
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -104,11 +108,13 @@ def transform_raw_data(data: list[RawRow]) -> list[ProcessedRow]:
     Returns:
         list[ProcessedRow]: List of processed rows with calculated metrics
     """
-    return [
-        process_inverter_data(d.timestamp, d.value)
-        for d in data
-        if "Inverter" in d.name
-    ]
+    inverter_data = [d for d in data if "Inverter" in d.name]
+    processed = [process_inverter_data(d.timestamp, d.value) for d in inverter_data]
+
+    logger.info(
+        f"Transformed {len(inverter_data)} inverter rows into {len(processed)} processed records"
+    )
+    return processed
 
 
 def flatten_raw_data(raw: dict[str, Any]) -> list[RawRow]:
@@ -129,6 +135,7 @@ def flatten_raw_data(raw: dict[str, Any]) -> list[RawRow]:
         name = str(x["name"])
         units = str(x["units"])
         type = str(x["type"])
+
         for y in x["data"]:
             row = RawRow(
                 name=name,
@@ -138,6 +145,10 @@ def flatten_raw_data(raw: dict[str, Any]) -> list[RawRow]:
                 value=y[1],
             )
             data.append(row)
+
+    logger.debug(
+        f"Flattened {len(raw.get('data', []))} series into {len(data)} total rows"
+    )
     return data
 
 
