@@ -17,7 +17,7 @@ RUN uv sync --frozen --no-dev
 # 
 FROM python:3.12-slim AS runtime
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends libpq5 && \
+    apt-get install -y --no-install-recommends ca-certificates libpq5 && \
     rm -rf /var/lib/apt/lists/* && \
     useradd --create-home --uid 1000 appuser
 WORKDIR /app
