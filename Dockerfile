@@ -20,6 +20,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates libpq5 && \
     rm -rf /var/lib/apt/lists/* && \
     useradd --create-home --uid 1000 appuser
+RUN update-ca-certificates
 WORKDIR /app
 COPY --from=builder --chown=appuser:appuser /app/.venv /app/.venv
 COPY --from=builder --chown=appuser:appuser /app/src /app/src
