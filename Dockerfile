@@ -23,7 +23,6 @@ RUN apt-get update && \
 WORKDIR /app
 COPY --from=builder --chown=appuser:appuser /app/.venv /app/.venv
 COPY --from=builder --chown=appuser:appuser /app/src /app/src
-COPY --from=builder --chown=appuser:appuser /app/README.md /app/README.md
 USER appuser
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
