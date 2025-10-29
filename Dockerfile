@@ -1,18 +1,20 @@
-# syntax=docker/dockerfile:1
-
+#
+# Builder - create virtual environment supporting application
+# 
 FROM python:3.12-slim AS builder
 WORKDIR /app
 RUN apt-get update && \
     apt-get install -y --no-install-recommends curl ca-certificates && \
-    curl -LsSf https://astral.sh/uv/install.sh | sh && \
-    rm -rf /var/lib/apt/lists/*
+    curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:$PATH"
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 COPY src ./src
-COPY README.md ./
 RUN uv sync --frozen --no-dev
 
+#
+# Runner - minimal image to run application
+# 
 FROM python:3.12-slim AS runtime
 RUN apt-get update && \
     apt-get install -y --no-install-recommends libpq5 && \
