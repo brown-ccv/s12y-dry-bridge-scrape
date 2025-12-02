@@ -13,3 +13,7 @@ services:
     restart: always
     ports:
       - 8080:8080
+  app:
+    image: ghcr.io/brown-ccv/s12y-dry-bridge-scrape:main
+    build: .
+    env_file: .env
