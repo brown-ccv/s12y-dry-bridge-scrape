@@ -54,7 +54,9 @@ def scrape(
 
 def scrape_client() -> httpx.Client:
     retry = Retry(total=MAX_RETRIES, backoff_factor=0.5)
-    client = httpx.Client(transport=RetryTransport(retry=retry))
+    client = httpx.Client(
+        transport=RetryTransport(retry=retry), verify=False, timeout=25.0
+    )
 
     logger.debug(f"Getting auth cookies from: {HOME_URL}")
     # NOTE(@broarr): This is to get the auth cookies only

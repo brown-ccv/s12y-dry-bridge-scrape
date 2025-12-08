@@ -9,18 +9,33 @@ It uses PostgreSQL as the backend database with psycopg2 for connectivity.
 
 import logging
 import os
-from dataclasses import asdict
 from datetime import datetime, timedelta
 
 from psycopg2 import connect, Error
-from psycopg2.extensions import connection
-from psycopg2.extras import execute_values
+from psycopg2.extensions import connection, cursor
+from psycopg2.extras import (
+    execute_values,
+    LoggingConnection as DefaultLoggingConnection,
+    LoggingCursor as DefaultLoggingCursor,
+)
 
 from .transform import ProcessedRow, RawRow
 from .utils import START_OF_OPERATION, round_down_15min, local_now
 
 
 logger = logging.getLogger(__name__)
+
+
+class LoggingConnection(DefaultLoggingConnection):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.initialize(logger)
+
+
+class LoggingCursor(DefaultLoggingCursor):
+    def execute(self, sql, args=None):
+        logger.debug(self.mogrify(sql, args))
+        super().execute(sql, args)
 
 
 def database_connection() -> connection:
@@ -53,10 +68,24 @@ def database_connection() -> connection:
         database=database,
         user=user,
         password=password,
+        connection_factory=LoggingConnection,
     )
     logger.info("Database connection established successfully")
     create_tables(conn)
     return conn
+
+
+def database_cursor(conn: connection) -> cursor:
+    """
+    Create a new database cursor.
+
+    Creates a new database cursor using the provided connection.
+    Ensures that the cursor logs the SQL queries for debugging
+
+    Returns:
+        cursor: PostgreSQL cursor object
+    """
+    return conn.cursor(cursor_factory=LoggingCursor)
 
 
 def create_tables(conn: connection) -> None:
@@ -76,7 +105,7 @@ def create_tables(conn: connection) -> None:
     """
     logger.debug("Creating database tables if they don't exist")
     try:
-        cursor = conn.cursor()
+        cursor = database_cursor(conn)
 
         create_table_query = """
         CREATE TABLE IF NOT EXISTS dry_bridge_solar_processed (
@@ -119,7 +148,7 @@ def insert_raw_row(conn: connection, raw_rows: list[RawRow]) -> None:
         conn: Active database connection
         raw_row: Raw data row to insert
     """
-    cursor = conn.cursor()
+    cursor = database_cursor(conn)
 
     execute_values(
         cursor,
@@ -144,7 +173,7 @@ def insert_processed_row(conn: connection, processed_rows: list[ProcessedRow]) -
         conn: Active database connection
         processed_row: Processed data row to insert
     """
-    cursor = conn.cursor()
+    cursor = database_cursor(conn)
 
     execute_values(
         cursor,
@@ -213,7 +242,7 @@ def load_transformed(conn: connection, data: list[ProcessedRow]) -> None:
 
 def most_recent_record(conn: connection) -> ProcessedRow | None:
     logger.debug("Querying for most recent processed record")
-    cursor = conn.cursor()
+    cursor = database_cursor(conn)
 
     try:
         cursor.execute(
@@ -281,7 +310,7 @@ def find_missing_timestamps(conn: connection) -> list[datetime]:
         List of missing datetime objects
     """
     logger.debug("Querying for missing timestamps")
-    cursor = conn.cursor()
+    cursor = database_cursor(conn)
 
     cursor.execute("""
         SELECT timestamp 
@@ -306,7 +335,18 @@ def find_missing_timestamps(conn: connection) -> list[datetime]:
 
 def record_fetch_attempt(conn: connection, date: datetime, status: str) -> None:
     """Record or update fetch attempt for a date."""
-    cursor = conn.cursor()
+
+    # NOTE(@broarr): This script is designed to run every 15 minutes. The
+    #   current state of the fetch attempt accounting makes it so that
+    #   refetches increment the counter, or set success. This prevents the
+    #   real-time-ish update of the database. By exiting if the date to process
+    #   is today we prevent that problem. Today is the only day that can be
+    #   incrementally updated, so it should be safe
+    if date.date() == local_now().date():
+        logger.warn(f"Skipping fetch attempt for today, {date}")
+        return
+
+    cursor = database_cursor(conn)
     try:
         cursor.execute(
             """
@@ -327,7 +367,7 @@ def should_skip_date(conn: connection, date: datetime) -> bool:
     from .utils import MAX_FETCH_ATTEMPTS
 
     date_only = date.date()
-    cursor = conn.cursor()
+    cursor = database_cursor(conn)
     try:
         cursor.execute(
             """

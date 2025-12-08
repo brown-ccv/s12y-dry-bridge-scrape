@@ -7,7 +7,7 @@ from the Dry Bridge solar farm dashboard and loading it into a PostgreSQL databa
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, tzinfo
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -17,6 +17,7 @@ from typing_extensions import Annotated
 
 from .load import (
     database_connection,
+    database_cursor,
     find_missing_timestamps,
     group_by_date,
     load_raw,
@@ -26,7 +27,7 @@ from .load import (
 )
 from .scrape import scrape, scrape_client, scrape_date
 from .transform import flatten_raw_data, transform_raw_data
-from .utils import START_OF_OPERATION
+from .utils import START_OF_OPERATION, iso_to_local, local_now
 
 
 app = typer.Typer()
@@ -115,14 +116,14 @@ def load(
     # Clear tables - load is for initial historical loads only
     if raw:
         logger.info("Clearing raw table for fresh load")
-        cursor = conn.cursor()
+        cursor = database_cursor(conn)
         cursor.execute("TRUNCATE dry_bridge_solar_raw")
         cursor.close()
         conn.commit()
 
     if transform:
         logger.info("Clearing processed table for fresh load")
-        cursor = conn.cursor()
+        cursor = database_cursor(conn)
         cursor.execute("TRUNCATE dry_bridge_solar_processed")
         cursor.close()
         conn.commit()
@@ -200,7 +201,11 @@ def refresh() -> None:
     dates_to_scrape = group_by_date(missing_timestamps)
     logger.info(f"Need to scrape {len(dates_to_scrape)} dates to fill gaps")
 
-    eligible_dates = [d for d in dates_to_scrape if not should_skip_date(conn, d)]
+    eligible_dates = [
+        d
+        for d in dates_to_scrape
+        if not should_skip_date(conn, d) or d.date() == local_now().date()
+    ]
     skipped = len(dates_to_scrape) - len(eligible_dates)
     if skipped > 0:
         logger.info(f"Skipping {skipped} dates due to retry limits")
@@ -230,9 +235,13 @@ def refresh() -> None:
 
             # Process this date immediately
             raw_data = flatten_raw_data(data)
+            logger.debug(raw_data)
 
             # Filter to only missing timestamps for this date
-            filtered_raw = [row for row in raw_data if row.timestamp in missing_set]
+            filtered_raw = [
+                row for row in raw_data if iso_to_local(row.timestamp) in missing_set
+            ]
+            logger.debug(filtered_raw)
 
             if not filtered_raw:
                 logger.debug(f"{date.date()}: no missing timestamps in this date")
