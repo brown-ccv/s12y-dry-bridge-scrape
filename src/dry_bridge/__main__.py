@@ -7,7 +7,7 @@ from the Dry Bridge solar farm dashboard and loading it into a PostgreSQL databa
 
 import json
 import logging
-from datetime import datetime, tzinfo
+from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -27,7 +27,7 @@ from .load import (
 )
 from .scrape import scrape, scrape_client, scrape_date
 from .transform import flatten_raw_data, transform_raw_data
-from .utils import START_OF_OPERATION, iso_to_local, local_now
+from .utils import START_OF_OPERATION, iso_to_local, local_now, remove_future_timestamps
 
 
 app = typer.Typer()
@@ -196,6 +196,14 @@ def refresh() -> None:
         logger.info("No missing data, database is complete!")
         return
 
+    # NOTE(@broarr): The api returns nulls for anything that's in the future
+    #   we need to make sure to ignore those timestamps so we don't add nulls
+    #   all over the database
+    missing_timestamps = remove_future_timestamps(local_now(), missing_timestamps)
+
+    # NOTE(@broarr): Sets compare faster than lists when filtering
+    missing_set = set(missing_timestamps)
+
     logger.info(f"Found {len(missing_timestamps)} missing timestamps")
 
     dates_to_scrape = group_by_date(missing_timestamps)
@@ -213,9 +221,6 @@ def refresh() -> None:
     if not eligible_dates:
         logger.info("No eligible dates to scrape")
         return
-
-    # Convert to set for fast lookup when filtering
-    missing_set = set(missing_timestamps)
 
     client = scrape_client()
     total_loaded = 0
@@ -235,7 +240,6 @@ def refresh() -> None:
 
             # Process this date immediately
             raw_data = flatten_raw_data(data)
-            logger.debug(raw_data)
 
             # Filter to only missing timestamps for this date
             filtered_raw = [

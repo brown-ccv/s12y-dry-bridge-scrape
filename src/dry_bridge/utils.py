@@ -23,3 +23,10 @@ def local_now() -> datetime:
 def iso_to_local(timestamp: str) -> datetime:
     tz = ZoneInfo("America/New_York")
     return datetime.fromisoformat(timestamp).astimezone(tz)
+
+
+def remove_future_timestamps(
+    now: datetime, timestamps: list[datetime]
+) -> list[datetime]:
+    nearest_15 = round_down_15min(now)
+    return list(filter(lambda x: x <= nearest_15, timestamps))
