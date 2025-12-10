@@ -245,7 +245,6 @@ def refresh() -> None:
             filtered_raw = [
                 row for row in raw_data if iso_to_local(row.timestamp) in missing_set
             ]
-            logger.debug(filtered_raw)
 
             if not filtered_raw:
                 logger.debug(f"{date.date()}: no missing timestamps in this date")
