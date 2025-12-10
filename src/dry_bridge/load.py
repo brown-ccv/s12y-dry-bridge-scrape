@@ -38,7 +38,7 @@ class LoggingCursor(DefaultLoggingCursor):
         super().execute(sql, args)
 
 
-def database_connection() -> connection:
+def database_connection(verbose=False) -> connection:
     """
     Establish a database connection and ensure tables exist.
 
@@ -68,14 +68,14 @@ def database_connection() -> connection:
         database=database,
         user=user,
         password=password,
-        connection_factory=LoggingConnection,
+        connection_factory=LoggingConnection if verbose else None,
     )
     logger.info("Database connection established successfully")
     create_tables(conn)
     return conn
 
 
-def database_cursor(conn: connection) -> cursor:
+def database_cursor(conn: connection, verbose=False) -> cursor:
     """
     Create a new database cursor.
 
@@ -85,7 +85,7 @@ def database_cursor(conn: connection) -> cursor:
     Returns:
         cursor: PostgreSQL cursor object
     """
-    return conn.cursor(cursor_factory=LoggingCursor)
+    return conn.cursor(cursor_factory=LoggingCursor if verbose else None)
 
 
 def create_tables(conn: connection) -> None:
