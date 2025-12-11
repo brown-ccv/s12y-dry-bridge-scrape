@@ -36,9 +36,6 @@ DB_PORT=5432
 DB_NAME=dry_bridge_db
 DB_USER=your_username
 DB_PASSWORD=your_password
-
-# Retry tracking configuration
-MAX_FETCH_ATTEMPTS=5  # Maximum retry attempts per date before skipping
 ```
 
 ### Database Setup
@@ -98,10 +95,10 @@ dry-bridge refresh
 ```
 
 The refresh command is designed to run on a schedule (e.g., every 15 minutes via cron or Kubernetes CronJob). It automatically:
-- Detects missing 15-minute intervals in the database
+- Detects missing 15-minute intervals in the raw data table
 - Scrapes only the necessary dates to fill gaps
 - Adds new data as it becomes available
-- Tracks retry attempts to avoid repeatedly scraping dates that consistently fail
+- Retries failed fetches on the next run (no retry limits)
 
 ### Complete ETL Pipeline
 
@@ -114,7 +111,7 @@ dry-bridge extract && dry-bridge load
 
 ## Database Schema
 
-The application creates three tables:
+The application creates two tables:
 
 ### `dry_bridge_solar_processed`
 - `timestamp` (TIMESTAMP, PRIMARY KEY): UTC timestamp
@@ -130,10 +127,15 @@ The application creates three tables:
 - `units` (TEXT): Units of measurement
 - `value` (FLOAT): Raw measurement value
 
-### `dry_bridge_fetch_attempts`
-- `date` (DATE, PRIMARY KEY): Date of fetch attempt
-- `attempt_count` (INTEGER): Number of fetch attempts
-- `status` (TEXT): Status of last attempt ('empty', 'error', or 'success')
+**Note**: The raw table is the source of truth for what data has been fetched from the API.
+
+## Database Migration
+
+The `dry_bridge_fetch_attempts` table is no longer used and can be safely dropped:
+
+```sql
+DROP TABLE IF EXISTS dry_bridge_fetch_attempts;
+```
 
 ## Data Export
 

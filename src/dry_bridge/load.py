@@ -20,7 +20,7 @@ from psycopg2.extras import (
 )
 
 from .transform import ProcessedRow, RawRow
-from .utils import START_OF_OPERATION, round_down_15min, local_now
+from .utils import START_OF_OPERATION, round_down_15min, local_now, iso_to_local
 
 
 logger = logging.getLogger(__name__)
@@ -92,10 +92,9 @@ def create_tables(conn: connection) -> None:
     """
     Create the required database tables if they don't exist.
 
-    Creates three tables:
+    Creates two tables:
     - dry_bridge_solar_processed: For processed/calculated solar metrics
     - dry_bridge_solar_raw: For raw data from the monitoring system
-    - dry_bridge_fetch_attempts: For tracking scrape attempts and retry limits
 
     Args:
         conn: Active database connection
@@ -123,12 +122,6 @@ def create_tables(conn: connection) -> None:
             type TEXT,
             units TEXT,
             value FLOAT
-        );
-
-        CREATE TABLE IF NOT EXISTS dry_bridge_fetch_attempts (
-            date DATE PRIMARY KEY,
-            attempt_count INTEGER NOT NULL DEFAULT 1,
-            status TEXT NOT NULL CHECK (status IN ('empty', 'error', 'success'))
         );
         """
         cursor.execute(create_table_query)
@@ -280,26 +273,63 @@ def group_by_date(timestamps: list[datetime]) -> list[datetime]:
     since the API works on a per-day basis.
 
     Args:
-        timestamps: List of datetime objects
+        timestamps: List of timezone-aware datetime objects
 
     Returns:
-        List of datetime objects representing unique dates
+        List of timezone-aware datetime objects representing unique dates at midnight
     """
+    if not timestamps:
+        return []
+    
+    # Get timezone from first timestamp (all should be same zone)
+    tz = timestamps[0].tzinfo
+    
     unique_dates = set()
     for ts in timestamps:
         unique_dates.add(ts.date())
 
     result = []
     for date in sorted(unique_dates):
-        result.append(datetime.combine(date, datetime.min.time()))
+        result.append(datetime.combine(date, datetime.min.time(), tzinfo=tz))
 
     return result
 
 
+def compute_missing_timestamps(
+    existing_timestamps: set[datetime],
+    start: datetime,
+    end: datetime,
+) -> list[datetime]:
+    """
+    Compute which 15-minute intervals are missing from a set.
+
+    Pure function that compares expected intervals against existing ones.
+
+    Args:
+        existing_timestamps: Set of timestamps that exist
+        start: Start of range to check
+        end: End of range to check (inclusive)
+
+    Returns:
+        List of missing datetime objects (sorted)
+    """
+    missing = []
+    current = start
+    delta = timedelta(minutes=15)
+
+    while current <= end:
+        if current not in existing_timestamps:
+            missing.append(current)
+        current += delta
+
+    return missing
+
+
 def find_missing_timestamps(conn: connection) -> list[datetime]:
     """
-    Find all 15-minute intervals missing from the database.
+    Find all 15-minute intervals missing from the RAW data table.
 
+    The raw table is the source of truth for what's been fetched from the API.
     Queries the database for existing timestamps and compares against
     expected intervals from START_OF_OPERATION to now.
 
@@ -309,91 +339,26 @@ def find_missing_timestamps(conn: connection) -> list[datetime]:
     Returns:
         List of missing datetime objects
     """
-    logger.debug("Querying for missing timestamps")
+    logger.debug("Querying for missing timestamps in raw data")
     cursor = database_cursor(conn)
 
     cursor.execute("""
-        SELECT timestamp 
-        FROM dry_bridge_solar_processed 
+        SELECT DISTINCT timestamp 
+        FROM dry_bridge_solar_raw 
         ORDER BY timestamp
     """)
-    existing_timestamps = {row[0] for row in cursor.fetchall()}
 
-    missing = []
-    current = START_OF_OPERATION
-    end = round_down_15min(local_now())
-    delta = timedelta(minutes=15)
+    existing_timestamps = set()
+    for row in cursor.fetchall():
+        try:
+            ts = iso_to_local(row[0])
+            existing_timestamps.add(ts)
+        except Exception as e:
+            logger.warning(f"Failed to parse timestamp {row[0]}: {e}")
 
-    while current <= end:
-        if current not in existing_timestamps:
-            missing.append(current)
-        current += delta
+    missing = compute_missing_timestamps(
+        existing_timestamps, START_OF_OPERATION, round_down_15min(local_now())
+    )
 
-    logger.info(f"Found {len(missing)} missing timestamps")
+    logger.info(f"Found {len(missing)} missing timestamps in raw data")
     return missing
-
-
-def record_fetch_attempt(conn: connection, date: datetime, status: str) -> None:
-    """Record or update fetch attempt for a date."""
-
-    # NOTE(@broarr): This script is designed to run every 15 minutes. The
-    #   current state of the fetch attempt accounting makes it so that
-    #   refetches increment the counter, or set success. This prevents the
-    #   real-time-ish update of the database. By exiting if the date to process
-    #   is today we prevent that problem. Today is the only day that can be
-    #   incrementally updated, so it should be safe
-    if date.date() == local_now().date():
-        logger.warn(f"Skipping fetch attempt for today, {date}")
-        return
-
-    cursor = database_cursor(conn)
-    try:
-        cursor.execute(
-            """
-            INSERT INTO dry_bridge_fetch_attempts (date, attempt_count, status)
-            VALUES (%s, 1, %s)
-            ON CONFLICT (date) DO UPDATE SET
-                attempt_count = dry_bridge_fetch_attempts.attempt_count + 1,
-                status = EXCLUDED.status
-            """,
-            (date.date(), status),
-        )
-    finally:
-        cursor.close()
-
-
-def should_skip_date(conn: connection, date: datetime) -> bool:
-    """Check if date should be skipped due to retry limits."""
-    from .utils import MAX_FETCH_ATTEMPTS
-
-    date_only = date.date()
-    cursor = database_cursor(conn)
-    try:
-        cursor.execute(
-            """
-            SELECT attempt_count, status 
-            FROM dry_bridge_fetch_attempts 
-            WHERE date = %s
-            """,
-            (date_only,),
-        )
-        row = cursor.fetchone()
-
-        if not row:
-            return False
-
-        count, status = row
-
-        if status == "success":
-            logger.debug(f"{date_only}: Already successful, skipping")
-            return True
-
-        if count >= MAX_FETCH_ATTEMPTS:
-            logger.debug(
-                f"{date_only}: Hit max attempts ({count}/{MAX_FETCH_ATTEMPTS}), skipping"
-            )
-            return True
-
-        return False
-    finally:
-        cursor.close()

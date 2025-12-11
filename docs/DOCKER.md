@@ -38,9 +38,6 @@ spec:
             envFrom:
             - secretRef:
                 name: dry-bridge-db-credentials
-            env:
-            - name: MAX_FETCH_ATTEMPTS
-              value: "5"
             resources:
               requests:
                 memory: "256Mi"

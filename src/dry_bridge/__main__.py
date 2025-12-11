@@ -22,8 +22,6 @@ from .load import (
     group_by_date,
     load_raw,
     load_transformed,
-    record_fetch_attempt,
-    should_skip_date,
 )
 from .scrape import scrape, scrape_client, scrape_date
 from .transform import flatten_raw_data, transform_raw_data
@@ -178,12 +176,12 @@ def refresh() -> None:
     """
     Fill any gaps in the database and add new data.
 
-    Queries the database for missing 15-minute intervals, scrapes the
-    necessary dates, and loads the missing data. This command automatically
-    detects and fills gaps in historical data while also adding new records.
+    Queries the RAW data table for missing 15-minute intervals and scrapes
+    the necessary dates to fill them. This command automatically detects and
+    fills gaps in historical data while also adding new records.
 
-    Uses retry tracking to avoid repeatedly scraping dates that consistently
-    fail or return no data.
+    If a scrape fails, the gaps remain and will be retried on the next run.
+    There are no retry limits.
     """
     logger = logging.getLogger(__name__)
     logger.info("Starting refresh command")
@@ -209,24 +207,11 @@ def refresh() -> None:
     dates_to_scrape = group_by_date(missing_timestamps)
     logger.info(f"Need to scrape {len(dates_to_scrape)} dates to fill gaps")
 
-    eligible_dates = [
-        d
-        for d in dates_to_scrape
-        if not should_skip_date(conn, d) or d.date() == local_now().date()
-    ]
-    skipped = len(dates_to_scrape) - len(eligible_dates)
-    if skipped > 0:
-        logger.info(f"Skipping {skipped} dates due to retry limits")
-
-    if not eligible_dates:
-        logger.info("No eligible dates to scrape")
-        return
-
     client = scrape_client()
     total_loaded = 0
-    total_dates = len(eligible_dates)
+    total_dates = len(dates_to_scrape)
 
-    for i, date in enumerate(eligible_dates, 1):
+    for i, date in enumerate(dates_to_scrape, 1):
         if i % 10 == 0:
             logger.info(f"Progress: {i}/{total_dates} dates processed")
 
@@ -234,8 +219,6 @@ def refresh() -> None:
             data = scrape_date(client, date)
             if len(data["data"]) == 0:
                 logger.warning(f"✗ {date.date()}: no data available")
-                record_fetch_attempt(conn, date, "empty")
-                conn.commit()
                 continue
 
             # Process this date immediately
@@ -248,8 +231,6 @@ def refresh() -> None:
 
             if not filtered_raw:
                 logger.debug(f"{date.date()}: no missing timestamps in this date")
-                record_fetch_attempt(conn, date, "success")
-                conn.commit()
                 continue
 
             # Load raw data
@@ -262,12 +243,9 @@ def refresh() -> None:
             load_transformed(conn, transformed)
 
             total_loaded += len(transformed)
-            record_fetch_attempt(conn, date, "success")
 
         except Exception as e:
             logger.error(f"Failed to scrape {date}: {e}")
-            record_fetch_attempt(conn, date, "error")
-            conn.commit()
 
     conn.commit()
 

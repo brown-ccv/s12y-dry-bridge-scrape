@@ -5,7 +5,6 @@ from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 START_OF_OPERATION = datetime(2023, 9, 9, tzinfo=ZoneInfo("America/New_York"))
-MAX_FETCH_ATTEMPTS = int(os.getenv("MAX_FETCH_ATTEMPTS", "5"))
 
 
 def round_down_15min(timestamp: datetime) -> datetime:
@@ -22,7 +21,8 @@ def local_now() -> datetime:
 
 def iso_to_local(timestamp: str) -> datetime:
     tz = ZoneInfo("America/New_York")
-    return datetime.fromisoformat(timestamp).astimezone(tz)
+    naive = datetime.fromisoformat(timestamp)
+    return naive.replace(tzinfo=tz)
 
 
 def remove_future_timestamps(

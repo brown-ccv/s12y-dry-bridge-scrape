@@ -179,5 +179,5 @@ def local_to_utc(timestamp: str) -> datetime:
         datetime: UTC datetime object
     """
     naive_timestamp = datetime.fromisoformat(timestamp)
-    local_timetimestamp = naive_timestamp.replace(tzinfo=ZoneInfo("America/New_York"))
-    return local_timetimestamp.astimezone(ZoneInfo("UTC"))
+    local_timestamp = naive_timestamp.replace(tzinfo=ZoneInfo("America/New_York"))
+    return local_timestamp.astimezone(ZoneInfo("UTC"))
