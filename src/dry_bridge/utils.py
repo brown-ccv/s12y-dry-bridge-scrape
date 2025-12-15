@@ -26,7 +26,8 @@ def iso_to_local(timestamp: str) -> datetime:
 
 
 def remove_future_timestamps(
-    now: datetime, timestamps: list[datetime]
+    now: datetime, timestamps: list[datetime], buffer_minutes: int = 3
 ) -> list[datetime]:
     nearest_15 = round_down_15min(now)
-    return list(filter(lambda x: x <= nearest_15, timestamps))
+    buffered_time = nearest_15 - timedelta(minutes=buffer_minutes)
+    return list(filter(lambda x: x <= buffered_time, timestamps))
