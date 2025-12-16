@@ -147,21 +147,30 @@ def load(
             logger.error(f"Failed to read {file_path.name}: {e}")
             continue
 
-        raw_rows = flatten_raw_data(data)
+        try:
+            raw_rows = flatten_raw_data(data)
 
-        # Raw table: just insert (no constraints, duplicates OK)
-        if raw:
-            load_raw(conn, raw_rows)
-            total_raw_loaded += len(raw_rows)
+            # Raw table: just insert (no constraints, duplicates OK)
+            if raw:
+                load_raw(conn, raw_rows)
+                total_raw_loaded += len(raw_rows)
 
-        # Processed table: simple insert (table is empty)
-        if transform:
-            transformed = transform_raw_data(raw_rows)
-            transformed = list(set(transformed))
-            transformed.sort(key=lambda x: x.timestamp)
-            load_transformed(conn, transformed)
-            total_transformed_loaded += len(transformed)
+            # Processed table: simple insert (table is empty)
+            if transform:
+                transformed = transform_raw_data(raw_rows)
+                transformed = list(set(transformed))
+                transformed.sort(key=lambda x: x.timestamp)
+                load_transformed(conn, transformed)
+                total_transformed_loaded += len(transformed)
 
+            # Commit every 10 files for reasonable batch size
+            if i % 10 == 0:
+                conn.commit()
+        except Exception as e:
+            logger.error(f"Failed to process {file_path.name}: {e}")
+            # Rollback already done in load functions, continue
+
+    # Final commit for remaining files
     conn.commit()
 
     logger.info(
@@ -242,12 +251,13 @@ def refresh() -> None:
             transformed.sort(key=lambda x: x.timestamp)
             load_transformed(conn, transformed)
 
+            # Commit after each successful date to maintain atomicity per date
+            conn.commit()
             total_loaded += len(transformed)
 
         except Exception as e:
             logger.error(f"Failed to scrape {date}: {e}")
-
-    conn.commit()
+            # Rollback is already done in load_raw/load_transformed, just continue
 
     logger.info(f"Refresh complete: filled {total_loaded} gaps")
 

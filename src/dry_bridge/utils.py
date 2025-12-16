@@ -20,6 +20,7 @@ def local_now() -> datetime:
 
 
 def iso_to_local(timestamp: str) -> datetime:
+    """Convert naive ISO timestamp string (in Eastern time) to timezone-aware Eastern datetime."""
     tz = ZoneInfo("America/New_York")
     naive = datetime.fromisoformat(timestamp)
     return naive.replace(tzinfo=tz)
