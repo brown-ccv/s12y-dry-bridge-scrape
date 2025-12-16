@@ -108,7 +108,7 @@ def create_tables(conn: connection) -> None:
 
         create_table_query = """
         CREATE TABLE IF NOT EXISTS dry_bridge_solar_processed (
-            timestamp TIMESTAMP PRIMARY KEY,
+            timestamp TIMESTAMPTZ PRIMARY KEY,
             kw FLOAT,
             kwh FLOAT,
             mmbtu FLOAT,
